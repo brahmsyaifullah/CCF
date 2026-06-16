@@ -65,10 +65,12 @@ install -m 0755 "$SRC/bin/fusion-call"          "$FUSION_DIR/fusion-call"
 install -m 0755 "$SRC/hooks/fusion-hook.sh"     "$FUSION_DIR/fusion-hook.sh"
 install -m 0755 "$SRC/bin/ccf-update.sh"        "$FUSION_DIR/ccf-update.sh"
 install -m 0755 "$SRC/bin/ccf-check-update.sh"  "$FUSION_DIR/ccf-check-update.sh"
+install -m 0755 "$SRC/bin/fusion-onboard"       "$FUSION_DIR/fusion-onboard"
 for f in "$SRC/commands/"*.md; do install -m 0644 "$f" "$CMD_DIR/$(basename "$f")"; done
 install -m 0644 "$SRC/config/providers.dist.json" "$FUSION_DIR/providers.dist.json"
 install -m 0644 "$SRC/config/panel.dist.json"     "$FUSION_DIR/panel.dist.json"
 install -m 0644 "$SRC/config/secrets.env.example" "$FUSION_DIR/secrets.env.example"
+install -m 0644 "$SRC/config/catalog.json"        "$FUSION_DIR/catalog.json"
 install -m 0644 "$SRC/VERSION"                    "$FUSION_DIR/VERSION"
 printf '%s\n' "$REPO_SLUG" > "$FUSION_DIR/.ccf-source"
 say "installed dispatcher, hooks, update scripts, and slash commands"
@@ -125,3 +127,16 @@ Next:
 Default-mode is OFF. Turn proactive routing on with /fusion-on (off with /fusion-off).
 Update later with /ccf-update.
 EOF
+
+# Offer interactive onboarding (only with a real terminal on both stdin and stdout —
+# never under curl|bash, where stdin is the piped script).
+if [ -t 0 ] && [ -t 1 ]; then
+  printf '\nRun interactive setup now (pick providers, add keys, enable panelists)? [y/N] '
+  read -r _ans || _ans=""
+  case "$_ans" in
+    y|Y) exec "$FUSION_DIR/fusion-onboard" ;;
+    *)   say "Skipped. Run it anytime:  $FUSION_DIR/fusion-onboard   (or /fusion-onboard)" ;;
+  esac
+else
+  say "Tip: run  $FUSION_DIR/fusion-onboard  (or /fusion-onboard) for guided provider/key setup."
+fi

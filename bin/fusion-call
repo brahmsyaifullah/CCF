@@ -9,7 +9,7 @@
 # Prints the model's text answer to stdout. Errors prefixed "ERR:".
 set -euo pipefail
 
-FDIR="$HOME/.claude/fusion"
+FDIR="${CLAUDE_HOME:-$HOME/.claude}/fusion"
 PROVIDERS="$FDIR/providers.json"
 PANEL="$FDIR/panel.json"
 SECRETS="$FDIR/secrets.env"
@@ -47,7 +47,9 @@ ptype=$(jq -r '.type' <<<"$pdef")
 endpoint=$(jq -r '.endpoint // ""' <<<"$pdef")
 auth=$(jq -r '.auth // "bearer"' <<<"$pdef")
 key_env=$(jq -r '.key_env // ""' <<<"$pdef")
-maxtok=$(jq -r '.max_tokens // 8192' <<<"$pdef")
+# Output budget. Env CALL_MAX_TOKENS overrides (reasoning models on a big task can need
+# a large budget or they spend it all on reasoning and return finish_reason=length).
+maxtok="${CALL_MAX_TOKENS:-$(jq -r '.max_tokens // 8192' <<<"$pdef")}"
 # Total request budget. Reasoning models on large prompts need minutes, not seconds.
 # Override per provider with "request_timeout" in providers.json. Env CALL_TIMEOUT wins.
 timeout="${CALL_TIMEOUT:-$(jq -r '.request_timeout // 600' <<<"$pdef")}"
@@ -77,22 +79,34 @@ fi
 # finish=length, empty answer). Floor it.
 [ "$maxtok" -lt 512 ] && maxtok=512
 
+# System prompt: per-panelist "system_prompt", else panel-wide "default_system_prompt",
+# else env CALL_SYSTEM, else none (absent => unchanged behaviour for old installs).
+sysprompt="${CALL_SYSTEM:-}"
+if [ -z "$sysprompt" ] && [ -n "$name" ]; then
+  sysprompt=$(jq -r --arg n "$name" '(.panel[]|select(.name==$n).system_prompt) // ""' "$PANEL" 2>/dev/null || echo "")
+fi
+[ -z "$sysprompt" ] && sysprompt=$(jq -r '.default_system_prompt // ""' "$PANEL" 2>/dev/null || echo "")
+
 case "$ptype" in
   openai)
-    jq -n --arg m "$model" --rawfile p "$promptfile" --argjson mt "$maxtok" \
-      '{model:$m,max_tokens:$mt,messages:[{role:"user",content:$p}]}' > "$bodyfile"
+    jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+      '{model:$m,max_tokens:$mt,
+        messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
+                   + [{role:"user",content:$p}])}' > "$bodyfile"
     resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" \
       -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
     [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
     [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
-    jq -r 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
+    jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
            if (pick) != "" then pick
-           elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason)). Likely context window exceeded — shrink the prompt."
+           elif (.choices[0].finish_reason // "") == "length" then "ERR: output truncated (finish_reason=length, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger> — a reasoning model likely spent it all on reasoning. (Not a context error; the input fit.)"
+           elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason))."
            else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
     ;;
   anthropic)
-    jq -n --arg m "$model" --rawfile p "$promptfile" --argjson mt "$maxtok" \
-      '{model:$m,max_tokens:$mt,messages:[{role:"user",content:$p}]}' > "$bodyfile"
+    jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+      '{model:$m,max_tokens:$mt,messages:[{role:"user",content:$p}]}
+       | (if ($s|length)>0 then .system=$s else . end)' > "$bodyfile"
     if [ "$auth" = "x-api-key" ]; then
       hdr=(-H "x-api-key: $key" -H "anthropic-version: 2023-06-01")
     else
@@ -101,8 +115,9 @@ case "$ptype" in
     resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" "${hdr[@]}" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
     [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
     [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
-    jq -r 'if (.content[0].text // "") != "" then .content[0].text
-           elif (.stop_reason // "") != "" then "ERR: empty output (stop_reason=\(.stop_reason)). Likely context window exceeded — shrink the prompt (glm-5.2 ceiling ≈1.04M tokens)."
+    jq -r --argjson mt "$maxtok" 'if (.content[0].text // "") != "" then .content[0].text
+           elif (.stop_reason // "") == "max_tokens" then "ERR: output truncated (stop_reason=max_tokens, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger>. (Not a context error; the input fit.)"
+           elif (.stop_reason // "") != "" then "ERR: empty output (stop_reason=\(.stop_reason)). Likely context window exceeded — shrink the prompt."
            else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
     ;;
   claude-cli)

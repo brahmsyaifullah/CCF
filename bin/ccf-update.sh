@@ -63,12 +63,14 @@ install -m 0755 "$root/bin/fusion-call"             "$FUSION_DIR/fusion-call"
 install -m 0755 "$root/hooks/fusion-hook.sh"        "$FUSION_DIR/fusion-hook.sh"
 install -m 0755 "$root/bin/ccf-update.sh"           "$FUSION_DIR/ccf-update.sh"
 install -m 0755 "$root/bin/ccf-check-update.sh"     "$FUSION_DIR/ccf-check-update.sh"
+install -m 0755 "$root/bin/fusion-onboard"          "$FUSION_DIR/fusion-onboard"
 for f in "$root/commands/"*.md; do install -m 0644 "$f" "$CMD_DIR/$(basename "$f")"; done
 
-# --- DIST templates: always refresh (reference copies, not your live config) ---
+# --- DIST templates + catalog: always refresh (reference copies, not your live config) ---
 install -m 0644 "$root/config/providers.dist.json"  "$FUSION_DIR/providers.dist.json"
 install -m 0644 "$root/config/panel.dist.json"      "$FUSION_DIR/panel.dist.json"
 install -m 0644 "$root/config/secrets.env.example"  "$FUSION_DIR/secrets.env.example"
+install -m 0644 "$root/config/catalog.json"         "$FUSION_DIR/catalog.json"
 
 # --- LIVE config: create if missing, otherwise leave the user's copy alone ---
 [ -f "$FUSION_DIR/providers.json" ] || install -m 0644 "$root/config/providers.dist.json" "$FUSION_DIR/providers.json"

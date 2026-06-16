@@ -1,7 +1,8 @@
 {
   "active": false,
   "judge": "running-session",
-  "_comment": "judge = the live Claude Code orchestrator (Opus 4.8). Panelists below are called via fusion-call. enabled=true means part of the default panel. sensitive_ok=false blocks proprietary/customer code from being sent (non-zero-retention or untrusted providers). Context (verified 2026-06-16): glm (zai) and deepseek (opencode-go) both ~1,048,576-token windows; fusion-call guards oversize prompts before upload using providers.json max_context_tokens/tok_per_char.",
+  "default_system_prompt": "You are a panelist in Claude Code Fusion, a multi-model review system. An orchestrator (Claude) will judge and synthesize your answer alongside other models', so give your strongest independent take. Rules: answer exactly what the prompt asks — no filler, no meta-commentary, no 'as an AI'. You are a pure reasoning/code engine: never claim to write files, run commands, or take actions; only propose. If you spot a bug, security flaw, or design risk, flag it explicitly with severity [LOW|MEDIUM|HIGH|CRITICAL] and one line of why. Follow any output format the prompt specifies; otherwise use concise Markdown.",
+  "_comment": "default_system_prompt applies to every panelist that has no per-panelist system_prompt override. fusion-call injects it (openai: system message; anthropic: top-level system). Set it to \"\" to send no system message. judge = the live Claude Code orchestrator (Opus 4.8). Panelists below are called via fusion-call. enabled=true means part of the default panel. sensitive_ok=false blocks proprietary/customer code from being sent (non-zero-retention or untrusted providers). Context (verified 2026-06-16): glm (zai) and deepseek (opencode-go) both ~1,048,576-token windows; fusion-call guards oversize prompts before upload using providers.json max_context_tokens/tok_per_char.",
   "panel": [
     {
       "name": "glm",

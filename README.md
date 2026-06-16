@@ -63,6 +63,7 @@ Then:
 
 | Command | What it does |
 |---------|--------------|
+| `/fusion-onboard` | Guided setup — pick providers, add keys (validated), enable panelists. |
 | `/fusion <task>` | Run a panel → judge → synthesis pass on demand (works anytime). |
 | `/fusion-on` · `/fusion-off` | Toggle default-mode (proactive routing of substantial tasks). |
 | `/fusion-status` | Show roster, providers, context limits, key presence, reachability. |
@@ -70,6 +71,19 @@ Then:
 | `/ccf-update` | Update CCF from GitHub (preserves your keys + config). |
 
 Default-mode ships **off** — `/fusion` is always available explicitly.
+
+## Onboarding
+
+After install, run the guided setup in your terminal (keys are read hidden, never pasted into chat):
+
+```bash
+~/.claude/fusion/fusion-onboard           # interactive
+~/.claude/fusion/fusion-onboard --dry-run # preview, writes nothing
+```
+
+It lists the provider catalog, takes a key, **validates it with a live probe**, registers the
+provider, and enables a recommended model as a panelist — idempotent, every write backed up. Inside
+Claude Code, `/fusion-onboard` points you to it.
 
 ## Providers & panelists
 
@@ -80,8 +94,25 @@ Default roster (`panel.json`):
 - **Available (disabled):** `sonnet`, `opus` (your sub via `claude` CLI), `deepseek-flash`,
   `north-code` (free, non-zero-retention).
 
-Add any OpenAI- or Anthropic-compatible provider (Gemini, Kimi, OpenRouter, …) with
-`/fusion-config add-provider` + `set-key`.
+### Provider catalog
+
+CCF ships a catalog (`~/.claude/fusion/catalog.json`) of 13 major providers with correct
+OpenAI/Anthropic-compatible endpoints, recommended current models, and docs links — **disabled by
+default**, so you enable only what you have keys for:
+
+OpenAI · Anthropic · Google Gemini · DeepSeek · xAI Grok · Mistral · Moonshot (Kimi) · Groq ·
+OpenRouter · Together · Fireworks · Cerebras · Qwen.
+
+Enable one via `/fusion-onboard`, or `/fusion-config add-provider --from-catalog <name>`. The
+catalog is read-only reference (refreshed on update); your live `providers.json` is never touched by it.
+Non-catalog providers: `/fusion-config add-provider` (manual) + `set-key`.
+
+### Panelist system prompt
+
+Every panelist inherits `panel.json`'s `default_system_prompt` (role + output contract: answer
+directly, propose-don't-act, flag risks with severity). Override one with a per-panelist
+`system_prompt`, or set the default to `""` to disable. `fusion-call` injects it correctly per
+transport (openai system message / anthropic top-level `system`).
 
 ## Context limits
 

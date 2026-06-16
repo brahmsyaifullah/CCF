@@ -1,0 +1,201 @@
+{
+  "_comment": "CCF provider catalog — a READ-ONLY reference of major model providers, their OpenAI/Anthropic-compatible chat endpoints, and recommended models. Onboarding and /fusion-config copy entries FROM here INTO your live providers.json. CCF refreshes this file on every update; do not edit it (your edits would be overwritten — edit providers.json instead). Model IDs drift fast: confirm the latest at each provider's docs URL. zero_retention defaults to false (conservative) — flip a panelist's sensitive_ok to true only for a provider you trust not to retain/train on your data.",
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "OPENAI_API_KEY",
+      "max_context_tokens": 400000,
+      "tok_per_char": 0.25,
+      "zero_retention": false,
+      "docs": "https://platform.openai.com/docs/models",
+      "models": [
+        { "model": "gpt-5.1",      "role": "deep-reasoning", "recommended": true },
+        { "model": "gpt-5.1-mini", "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "anthropic",
+      "type": "anthropic",
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "auth": "x-api-key",
+      "key_env": "ANTHROPIC_API_KEY",
+      "max_context_tokens": 200000,
+      "tok_per_char": 0.25,
+      "zero_retention": false,
+      "docs": "https://docs.anthropic.com/en/docs/about-claude/models",
+      "models": [
+        { "model": "claude-opus-4-8",          "role": "deep-reasoning", "recommended": true },
+        { "model": "claude-sonnet-4-6",         "role": "fast-reasoning" },
+        { "model": "claude-haiku-4-5-20251001", "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "google-gemini",
+      "type": "openai",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "auth": "bearer",
+      "key_env": "GEMINI_API_KEY",
+      "max_context_tokens": 1048576,
+      "tok_per_char": 0.25,
+      "zero_retention": false,
+      "docs": "https://ai.google.dev/gemini-api/docs/openai",
+      "models": [
+        { "model": "gemini-2.5-pro",   "role": "long-context-1M", "recommended": true },
+        { "model": "gemini-2.5-flash",  "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "deepseek",
+      "type": "openai",
+      "endpoint": "https://api.deepseek.com/chat/completions",
+      "auth": "bearer",
+      "key_env": "DEEPSEEK_API_KEY",
+      "max_context_tokens": 128000,
+      "tok_per_char": 0.28,
+      "zero_retention": false,
+      "docs": "https://api-docs.deepseek.com/quick_start/pricing",
+      "models": [
+        { "model": "deepseek-chat",     "role": "coding", "recommended": true },
+        { "model": "deepseek-reasoner", "role": "reasoning" }
+      ]
+    },
+    {
+      "name": "xai-grok",
+      "type": "openai",
+      "endpoint": "https://api.x.ai/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "XAI_API_KEY",
+      "max_context_tokens": 256000,
+      "tok_per_char": 0.25,
+      "zero_retention": false,
+      "docs": "https://docs.x.ai/docs/models",
+      "models": [
+        { "model": "grok-4",      "role": "reasoning", "recommended": true },
+        { "model": "grok-4-fast", "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "mistral",
+      "type": "openai",
+      "endpoint": "https://api.mistral.ai/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "MISTRAL_API_KEY",
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://docs.mistral.ai/getting-started/models/models_overview/",
+      "models": [
+        { "model": "mistral-large-latest", "role": "coding", "recommended": true },
+        { "model": "codestral-latest",     "role": "code-gen" }
+      ]
+    },
+    {
+      "name": "moonshot",
+      "type": "openai",
+      "endpoint": "https://api.moonshot.ai/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "MOONSHOT_API_KEY",
+      "max_context_tokens": 256000,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://platform.moonshot.ai/docs",
+      "models": [
+        { "model": "kimi-k2.7-code", "role": "coding", "recommended": true },
+        { "model": "kimi-k2.6",      "role": "long-context" }
+      ]
+    },
+    {
+      "name": "groq",
+      "type": "openai",
+      "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "GROQ_API_KEY",
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://console.groq.com/docs/models",
+      "models": [
+        { "model": "moonshotai/kimi-k2-instruct",     "role": "fast-coding", "recommended": true },
+        { "model": "llama-3.3-70b-versatile",         "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "openrouter",
+      "type": "openai",
+      "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "OPENROUTER_API_KEY",
+      "max_context_tokens": 200000,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://openrouter.ai/models",
+      "models": [
+        { "model": "openrouter/auto",          "role": "universal-fallback", "recommended": true },
+        { "model": "moonshotai/kimi-k2.6",     "role": "long-context" },
+        { "model": "deepseek/deepseek-chat",   "role": "coding" }
+      ]
+    },
+    {
+      "name": "together",
+      "type": "openai",
+      "endpoint": "https://api.together.xyz/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "TOGETHER_API_KEY",
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://docs.together.ai/docs/inference-models",
+      "models": [
+        { "model": "deepseek-ai/DeepSeek-V3",                 "role": "coding", "recommended": true },
+        { "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "fireworks",
+      "type": "openai",
+      "endpoint": "https://api.fireworks.ai/inference/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "FIREWORKS_API_KEY",
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://fireworks.ai/models",
+      "models": [
+        { "model": "accounts/fireworks/models/deepseek-v3", "role": "coding", "recommended": true }
+      ]
+    },
+    {
+      "name": "cerebras",
+      "type": "openai",
+      "endpoint": "https://api.cerebras.ai/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "CEREBRAS_API_KEY",
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://inference-docs.cerebras.ai/models/overview",
+      "models": [
+        { "model": "qwen-3-coder-480b", "role": "fast-coding", "recommended": true },
+        { "model": "llama-3.3-70b",     "role": "fast-cheap" }
+      ]
+    },
+    {
+      "name": "qwen-intl",
+      "type": "openai",
+      "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "DASHSCOPE_API_KEY",
+      "max_context_tokens": 1000000,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "docs": "https://www.alibabacloud.com/help/en/model-studio/getting-started/models",
+      "models": [
+        { "model": "qwen3-coder-plus", "role": "long-context-coding", "recommended": true },
+        { "model": "qwen-max",         "role": "reasoning" }
+      ]
+    }
+  ]
+}

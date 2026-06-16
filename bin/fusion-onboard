@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# fusion-onboard — interactive setup for CCF (Claude Code Fusion).
+# Pick providers from the catalog, paste keys (hidden, never shown), validate with a live
+# probe, and wire them into your panel. Idempotent and additive: existing secrets, providers,
+# and panelists are never clobbered without an explicit confirm; every config write is backed up.
+#
+#   fusion-onboard            interactive
+#   fusion-onboard --dry-run  show what would change, write nothing
+#
+# Run this in a TERMINAL (not inside the Claude chat) — you paste API keys here.
+set -uo pipefail
+
+FDIR="${CLAUDE_HOME:-$HOME/.claude}/fusion"
+PROVIDERS="$FDIR/providers.json"
+PANEL="$FDIR/panel.json"
+SECRETS="$FDIR/secrets.env"
+CATALOG="$FDIR/catalog.json"
+CALL="$FDIR/fusion-call"
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+for t in jq curl; do command -v "$t" >/dev/null 2>&1 || { echo "ERROR: '$t' is required."; exit 1; }; done
+[ -f "$CATALOG" ] || { echo "ERROR: catalog not found at $CATALOG — reinstall CCF."; exit 1; }
+[ -x "$CALL" ]    || { echo "ERROR: dispatcher not found at $CALL — reinstall CCF."; exit 1; }
+
+c_b=$'\033[1m'; c_d=$'\033[2m'; c_g=$'\033[32m'; c_y=$'\033[33m'; c_0=$'\033[0m'
+say(){ printf '%s\n' "$*"; }
+note(){ printf '  %s\n' "$*"; }
+backup(){ [ -f "$1" ] && cp "$1" "$1.bak.$(date +%Y%m%d%H%M%S)"; }
+dry(){ [ "$DRY" = "1" ] && { printf '%s[dry-run]%s would: %s\n' "$c_d" "$c_0" "$*"; return 0; }; return 1; }
+
+key_present(){ # key_env -> 0 if set in secrets.env
+  [ -f "$SECRETS" ] || return 1
+  grep -qE "^$1=.+" "$SECRETS" 2>/dev/null
+}
+
+save_key(){ # key_env value
+  local k="$1" v="$2"
+  dry "save $k to secrets.env (chmod 600)" && return 0
+  backup "$SECRETS"
+  umask 177
+  local tmp; tmp=$(mktemp)
+  [ -f "$SECRETS" ] && grep -v "^$k=" "$SECRETS" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$k" "$v" >> "$tmp"
+  mv "$tmp" "$SECRETS"; chmod 600 "$SECRETS"
+  note "${c_g}saved${c_0} $k (…${v: -4}) to secrets.env"
+}
+
+add_provider(){ # provider-name  catalog-entry-json
+  local name="$1" e="$2"
+  dry "register provider '$name' in providers.json" && return 0
+  backup "$PROVIDERS"
+  local tmp; tmp=$(mktemp)
+  jq --arg name "$name" --argjson e "$e" \
+    '.providers[$name] = ($e | {type, endpoint, auth, key_env, max_tokens: 8192, request_timeout: 600,
+                                 max_context_tokens: (.max_context_tokens // 0),
+                                 tok_per_char: (.tok_per_char // 0),
+                                 zero_retention: (.zero_retention // false)})' \
+    "$PROVIDERS" > "$tmp" && mv "$tmp" "$PROVIDERS"
+  note "${c_g}registered${c_0} provider '$name' in providers.json"
+}
+
+add_panelist(){ # name provider model role
+  local n="$1" prov="$2" model="$3" role="$4"
+  if jq -e --arg n "$n" 'any(.panel[]; .name==$n)' "$PANEL" >/dev/null 2>&1; then
+    note "${c_y}panelist '$n' already exists${c_0} — left as-is"
+    return 0
+  fi
+  dry "add panelist '$n' ($prov/$model) enabled, sensitive_ok=false" && return 0
+  backup "$PANEL"
+  local tmp; tmp=$(mktemp)
+  jq --arg n "$n" --arg p "$prov" --arg m "$model" --arg r "$role" \
+    '.panel += [{name:$n, provider:$p, model:$m, role:$r, enabled:true, sensitive_ok:false}]' \
+    "$PANEL" > "$tmp" && mv "$tmp" "$PANEL"
+  note "${c_g}added panelist${c_0} '$n' (enabled; sensitive_ok=false — set true only if you trust the provider)"
+}
+
+probe(){ # provider model -> 0 ok
+  note "probing $1/$2 …"
+  local out; out=$(CALL_MAX_TOKENS=2048 "$CALL" --provider "$1" --model "$2" "Reply with exactly: OK" 2>&1 | head -3)
+  if printf '%s' "$out" | grep -qiE 'ok|hello|yes'; then note "${c_g}probe ok${c_0}: $(printf '%s' "$out" | head -1)"; return 0
+  else note "${c_y}probe failed${c_0}: $(printf '%s' "$out" | head -1)"; return 1; fi
+}
+
+# ---- catalog access ----
+cat_names(){ jq -r '.providers[].name' "$CATALOG"; }
+cat_entry(){ jq -c --arg n "$1" '.providers[] | select(.name==$n)' "$CATALOG"; }
+rec_model(){ jq -r --arg n "$1" '.providers[] | select(.name==$n) | (.models[] | select(.recommended==true) | .model) // .models[0].model' "$CATALOG" | head -1; }
+
+show_state(){
+  say ""
+  say "${c_b}Enabled panelists:${c_0}"
+  jq -r '.panel[] | select(.enabled) | "  • \(.name)  \(.provider)/\(.model)"' "$PANEL" 2>/dev/null || note "(none)"
+  say "${c_b}Catalog providers${c_0} ${c_d}([key set] = you already have a key)${c_0}:"
+  local i=1 n ke
+  for n in $(cat_names); do
+    ke=$(jq -r --arg n "$n" '.providers[]|select(.name==$n).key_env' "$CATALOG")
+    if key_present "$ke"; then printf "  %2d) %-16s ${c_g}[key set]${c_0}\n" "$i" "$n"
+    else printf "  %2d) %-16s ${c_d}[no key]${c_0}\n" "$i" "$n"; fi
+    i=$((i+1))
+  done
+}
+
+add_flow(){ # index
+  local idx="$1" n e ke rmodel role pname
+  n=$(cat_names | sed -n "${idx}p")
+  [ -z "$n" ] && { note "no such number"; return; }
+  e=$(cat_entry "$n"); ke=$(jq -r '.key_env' <<<"$e")
+  rmodel=$(rec_model "$n"); role=$(jq -r --arg m "$rmodel" '.models[]|select(.model==$m).role // "panelist"' <<<"$e" | head -1)
+  say ""; say "${c_b}$n${c_0}  ($(jq -r '.type' <<<"$e") · $(jq -r '.endpoint' <<<"$e"))"
+  note "docs: $(jq -r '.docs // "—"' <<<"$e")   recommended model: $rmodel"
+  if [ "$(jq -r --arg z "$(jq -r '.zero_retention' <<<"$e")" -n '$z')" = "false" ]; then
+    note "${c_y}zero_retention=false${c_0} — don't send proprietary code unless you trust this provider."
+  fi
+  if key_present "$ke"; then
+    printf "  key %s already set. Re-enter? [y/N] " "$ke"; read -r ans
+    [ "${ans:-N}" = "y" ] || [ "${ans:-N}" = "Y" ] || { add_provider "$n" "$e"; offer_panelist "$n" "$rmodel" "$role"; return; }
+  fi
+  printf "  Paste %s (hidden, blank to skip): " "$ke"; read -rs KEY; echo
+  [ -z "$KEY" ] && { note "skipped (no key)"; return; }
+  save_key "$ke" "$KEY"
+  add_provider "$n" "$e"
+  if [ "$DRY" = "1" ]; then note "[dry-run] would probe + offer panelist"; return; fi
+  if probe "$n" "$rmodel"; then offer_panelist "$n" "$rmodel" "$role"
+  else note "Key saved but probe failed — fix the key later with /fusion-config set-key $ke, then re-run."; fi
+}
+
+offer_panelist(){ # provider model role
+  local prov="$1" model="$2" role="$3" pname
+  local def="$prov"
+  printf "  Add '%s' as a panelist? name [%s] (blank to skip): " "$model" "$def"; read -r pname
+  [ -z "${pname:-}" ] && pname="$def"
+  [ "${pname}" = "-" ] && { note "skipped panelist"; return; }
+  add_panelist "$pname" "$prov" "$model" "$role"
+}
+
+# ---- main loop ----
+say "${c_b}== CCF onboarding ==${c_0}  ${c_d}$([ "$DRY" = 1 ] && echo '(dry-run — no writes)')${c_0}"
+note "Keys are read hidden and stored only in $SECRETS (chmod 600). Never pasted into the Claude chat."
+while :; do
+  show_state
+  printf "\n${c_b}Action:${c_0} number=add provider · t=test enabled panel · q=quit > "
+  read -r choice
+  case "${choice:-q}" in
+    q|Q|"") say "Done. Restart Claude Code if panelists changed, then /fusion-status."; break ;;
+    t|T)
+      say ""; for nm in $(jq -r '.panel[]|select(.enabled).name' "$PANEL"); do
+        out=$(CALL_MAX_TOKENS=2048 "$CALL" "$nm" "Reply with exactly: OK" 2>&1 | head -1)
+        printf "  %-16s %s\n" "$nm" "$out"
+      done ;;
+    *[!0-9]*) note "enter a number, t, or q" ;;
+    *) add_flow "$choice" ;;
+  esac
+done

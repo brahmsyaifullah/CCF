@@ -7,7 +7,7 @@
 # triviality + sensitivity judgement. Always exits 0 (never blocks input).
 set -euo pipefail
 
-FDIR="$HOME/.claude/fusion"
+FDIR="${CLAUDE_HOME:-$HOME/.claude}/fusion"
 PANEL="$FDIR/panel.json"
 [ -f "$PANEL" ] || exit 0
 

@@ -27,13 +27,28 @@ mv "$tmp" "$F"; chmod 600 "$F"
 echo "$K updated (…${V: -4})"
 ```
 
-### add-provider — register a new model source
-Append to `providers.json`. Required: `type` (`openai` | `anthropic` | `claude-cli`),
-`endpoint`, `auth` (`bearer` | `x-api-key`), `key_env`, `max_tokens`, `zero_retention`.
+### list-catalog — show known providers + recommended models
+The catalog ships major providers with correct endpoints + current models. Read-only reference.
+```bash
+jq -r '.providers[] | "\(.name)\t\(.type)\t\(.endpoint)\tkey_env=\(.key_env)\tmodels=\([.models[].model]|join(","))"' ~/.claude/fusion/catalog.json
+```
 
+### add-provider --from-catalog <name> — register a catalogued provider (preferred)
+Copies the catalog entry into your live `providers.json` (no endpoint typing), then prompt for the key.
+```bash
+F=~/.claude/fusion/providers.json; C=~/.claude/fusion/catalog.json; tmp=$(mktemp)
+e=$(jq -c --arg n "$NAME" '.providers[]|select(.name==$n)' "$C")
+jq --arg n "$NAME" --argjson e "$e" \
+  '.providers[$n]=($e|{type,endpoint,auth,key_env,max_tokens:8192,request_timeout:600,max_context_tokens:(.max_context_tokens//0),tok_per_char:(.tok_per_char//0),zero_retention:(.zero_retention//false)})' \
+  "$F" > "$tmp" && mv "$tmp" "$F"
+```
+Then `set-key <key_env> <value>` and add a panelist. **Easiest path: just run `/fusion-onboard`** (terminal) — it does catalog pick → key → live probe → enable panelist, idempotently.
+
+### add-provider (manual) — non-catalogued source
+Required: `type` (`openai` | `anthropic` | `claude-cli`), `endpoint`, `auth` (`bearer` | `x-api-key`), `key_env`, `max_tokens`, `zero_retention`.
 ```bash
 F=~/.claude/fusion/providers.json; tmp=$(mktemp)
-jq --arg name "$NAME" '.providers[$name]={type:"openai",endpoint:"...",auth:"bearer",key_env:"NEW_KEY",max_tokens:8192,zero_retention:true}' "$F" > "$tmp" && mv "$tmp" "$F"
+jq --arg name "$NAME" '.providers[$name]={type:"openai",endpoint:"...",auth:"bearer",key_env:"NEW_KEY",max_tokens:8192,request_timeout:600,zero_retention:false}' "$F" > "$tmp" && mv "$tmp" "$F"
 ```
 Then `set-key NEW_KEY <value>` and add a panelist that uses it.
 
@@ -62,6 +77,15 @@ Run a reachability probe and report:
 - `opencode-go` — OpenCode Go flat-rate sub, DeepSeek/GLM/etc., zero-retention (`OPENCODE_GO_KEY`)
 - `opencode-zen` — OpenCode Zen pay-per-token; free models NOT zero-retention (`OPENCODE_ZEN_KEY`)
 
-## To add Gemini or Moonshot/Kimi later
-`add-provider` with their OpenAI-compatible endpoint + `set-key`. No Antigravity/OpenCode app
-needed — direct API only.
+## To add Gemini, Moonshot/Kimi, OpenAI, Grok, Mistral, Groq, OpenRouter, Qwen …
+They're all in the catalog (`~/.claude/fusion/catalog.json`). Use `add-provider --from-catalog <name>`
++ `set-key`, or just run `/fusion-onboard`. Direct API only — no Antigravity/OpenCode desktop app.
+
+## System prompt (per panelist or global)
+Panelists inherit `panel.json` `default_system_prompt`. Override one panelist with a `system_prompt`
+field, or set `default_system_prompt` to `""` to disable. `fusion-call` injects it correctly per
+transport (openai system message / anthropic top-level `system`).
+```bash
+F=~/.claude/fusion/panel.json; tmp=$(mktemp)
+jq '(.panel[]|select(.name=="NAME")|.system_prompt)="Your override here."' "$F" > "$tmp" && mv "$tmp" "$F"
+```
