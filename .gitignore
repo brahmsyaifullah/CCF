@@ -10,6 +10,11 @@ config/secrets.env
 *.bak
 *.ccf-bak
 
+# Local working notes — never publish (analysis, roadmap, private provider lists)
+Gitignore/
+notes/
+*.local.md
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
