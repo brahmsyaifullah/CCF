@@ -3,6 +3,25 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.2.0] — 2026-06-17
+
+### Added
+- **Provider catalog expanded to 20** (from 13): added Kimi-Code, MiniMax, Novita, HuggingFace,
+  Xiaomi MiMo, Ollama (cloud), and Ollama (local, keyless). Updated Gemini (3.x, 2M ctx), Groq
+  (Llama-4 Scout), and OpenRouter model lists to current IDs. Endpoints are full chat-completion URLs.
+- **Keyless providers**: `fusion-call` now supports providers with an empty/`none` `key_env`
+  (no `Authorization` header) — enables self-hosted Ollama (`localhost:11434`) for air-gapped,
+  zero-retention panels.
+- **`ccf-models` — live models.dev registry browser/installer**: the curated catalog is a subset;
+  `ccf-models` reads https://models.dev/api.json (121+ providers, every model with context + cost,
+  the same DB Hermes uses) and can `providers` / `models <p>` / `show <p>` / `add <p> <model>`
+  (registers the provider + adds a panelist). Cached 24h, honors `CLAUDE_HOME`.
+
+### Notes
+- Catalog model IDs are current-best starters with per-provider docs links; verify the latest at the
+  linked docs. OAuth-only providers (Qwen portal) and endpoint-less providers (Arcee) are omitted —
+  the dispatcher needs an endpoint plus bearer/x-api-key auth or a keyless host.
+
 ## [1.1.0] — 2026-06-17
 
 ### Added

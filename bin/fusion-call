@@ -55,7 +55,8 @@ maxtok="${CALL_MAX_TOKENS:-$(jq -r '.max_tokens // 8192' <<<"$pdef")}"
 timeout="${CALL_TIMEOUT:-$(jq -r '.request_timeout // 600' <<<"$pdef")}"
 key=""; [ -n "$key_env" ] && key="${!key_env:-}"
 
-if [ "$ptype" != "claude-cli" ] && [ -z "$key" ]; then
+# Keyless providers (e.g. self-hosted Ollama at localhost): key_env empty or "none" → no auth.
+if [ "$ptype" != "claude-cli" ] && [ -n "$key_env" ] && [ "$key_env" != "none" ] && [ -z "$key" ]; then
   echo "ERR: missing key \$$key_env for provider '$provider' (set it in secrets.env via /fusion-config)"; exit 1
 fi
 
@@ -93,8 +94,9 @@ case "$ptype" in
       '{model:$m,max_tokens:$mt,
         messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
                    + [{role:"user",content:$p}])}' > "$bodyfile"
+    oauth=(); [ -n "$key" ] && oauth=(-H "Authorization: Bearer $key")
     resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" \
-      -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
+      ${oauth[@]+"${oauth[@]}"} -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
     [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
     [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
     jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";

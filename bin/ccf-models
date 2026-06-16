@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# ccf-models — browse the live models.dev registry (121+ providers, every model) and register
+# any of them as a CCF provider. This is the COMPLETE list; catalog.json is just a curated subset.
+# Source: https://models.dev/api.json (community-maintained, the same DB Hermes uses).
+#
+#   ccf-models providers                 list every provider id + name
+#   ccf-models models <provider>         list a provider's models (context, $/Mtok)
+#   ccf-models show <provider>           base url, env, docs + a ready CCF provider entry
+#   ccf-models add <provider> <model> [panelist-name]
+#                                        register the provider in providers.json + add a panelist
+#   ccf-models --refresh ...             force re-download the registry cache
+set -uo pipefail
+
+FDIR="${CLAUDE_HOME:-$HOME/.claude}/fusion"
+PROVIDERS="$FDIR/providers.json"
+PANEL="$FDIR/panel.json"
+CACHE="$FDIR/.models-dev-cache.json"
+URL="https://models.dev/api.json"
+TTL="${CCF_MODELS_TTL:-86400}"
+
+for t in jq curl; do command -v "$t" >/dev/null 2>&1 || { echo "ERR: '$t' required"; exit 1; }; done
+
+REFRESH=0; [ "${1:-}" = "--refresh" ] && { REFRESH=1; shift; }
+fetch() {
+  local age=99999999
+  [ -f "$CACHE" ] && age=$(( $(date +%s) - $(stat -f %m "$CACHE" 2>/dev/null || stat -c %Y "$CACHE" 2>/dev/null || echo 0) ))
+  if [ "$REFRESH" = 1 ] || [ ! -s "$CACHE" ] || [ "$age" -gt "$TTL" ]; then
+    mkdir -p "$FDIR"
+    curl -fsSL -m 20 "$URL" -o "$CACHE.tmp" 2>/dev/null && mv "$CACHE.tmp" "$CACHE" \
+      || { [ -s "$CACHE" ] || { echo "ERR: cannot reach models.dev"; exit 1; }; }
+  fi
+}
+backup(){ [ -f "$1" ] && cp "$1" "$1.bak.$(date +%Y%m%d%H%M%S)"; }
+
+endpoint_for(){ # provider-id  base-api  ->  full chat URL
+  local id="$1" base="${2%/}"
+  if [ "$id" = "anthropic" ]; then echo "$base/v1/messages"; else echo "$base/chat/completions"; fi
+}
+
+cmd="${1:-providers}"; shift || true
+fetch
+
+case "$cmd" in
+  providers)
+    jq -r 'to_entries[] | select(.value.api) | "\(.key)\t\(.value.name // .key)\t(\(.value.models|length) models)"' "$CACHE" \
+      | sort | column -t -s $'\t'
+    echo; echo "$(jq '[to_entries[]|select(.value.api)]|length' "$CACHE") providers with a usable endpoint. Detail: ccf-models models <provider>"
+    ;;
+  models)
+    p="${1:?usage: ccf-models models <provider>}"
+    jq -e --arg p "$p" '.[$p]' "$CACHE" >/dev/null 2>&1 || { echo "ERR: unknown provider '$p' (see: ccf-models providers)"; exit 1; }
+    jq -r --arg p "$p" '.[$p].models | to_entries[] | .value |
+      "\(.id)\tctx=\(.limit.context // "?")\tout=\(.limit.output // "?")\t$in=\(.cost.input // "?")\t$out=\(.cost.output // "?")"' "$CACHE" \
+      | sort | column -t -s $'\t'
+    ;;
+  show)
+    p="${1:?usage: ccf-models show <provider>}"
+    e=$(jq -c --arg p "$p" '.[$p]' "$CACHE"); [ "$e" = "null" ] && { echo "ERR: unknown provider '$p'"; exit 1; }
+    base=$(jq -r '.api // ""' <<<"$e")
+    { [ -z "$base" ] || [ "$base" = "null" ]; } && { echo "ERR: models.dev lists no direct base URL for '$p' — reach it via 'openrouter', or use the curated catalog (/fusion-config)."; exit 1; }
+    ep=$(endpoint_for "$p" "$base")
+    env=$(jq -r '(.env[0]) // ""' <<<"$e"); [ -z "$env" ] && env="$(echo "$p" | tr '[:lower:]-' '[:upper:]_')_API_KEY"
+    typ="openai"; [ "$p" = "anthropic" ] && typ="anthropic"
+    auth="bearer"; [ "$typ" = "anthropic" ] && auth="x-api-key"
+    maxc=$(jq -r '[.models[].limit.context // 0]|max' <<<"$e")
+    echo "provider : $(jq -r '.name // .id' <<<"$e")  ($p)"
+    echo "base     : $base"
+    echo "endpoint : $ep"
+    echo "env      : $env"
+    echo "docs     : $(jq -r '.doc // "—"' <<<"$e")"
+    echo "models   : $(jq -r '[.models|keys[]]|join(", ")' <<<"$e" | cut -c1-200)…"
+    echo
+    echo "Suggested providers.json entry (review tok_per_char; verify endpoint at docs):"
+    jq -n --arg t "$typ" --arg ep "$ep" --arg a "$auth" --arg k "$env" --argjson mc "${maxc:-0}" \
+      '{($k|ascii_downcase|gsub("_api_key|_token";"")): {type:$t,endpoint:$ep,auth:$a,key_env:$k,max_tokens:8192,request_timeout:600,max_context_tokens:$mc,tok_per_char:0.27,zero_retention:false}}'
+    ;;
+  add)
+    p="${1:?usage: ccf-models add <provider> <model> [panelist-name]}"; model="${2:?need a model id}"; pname="${3:-$p}"
+    e=$(jq -c --arg p "$p" '.[$p]' "$CACHE"); [ "$e" = "null" ] && { echo "ERR: unknown provider '$p'"; exit 1; }
+    jq -e --arg m "$model" '.models[$m]' <<<"$e" >/dev/null 2>&1 || { echo "ERR: '$p' has no model '$model' (see: ccf-models models $p)"; exit 1; }
+    base=$(jq -r '.api // ""' <<<"$e")
+    { [ -z "$base" ] || [ "$base" = "null" ]; } && { echo "ERR: models.dev lists no direct base URL for '$p' — reach it via 'openrouter', or use the curated catalog."; exit 1; }
+    ep=$(endpoint_for "$p" "$base")
+    env=$(jq -r '(.env[0]) // ""' <<<"$e"); [ -z "$env" ] && env="$(echo "$p" | tr '[:lower:]-' '[:upper:]_')_API_KEY"
+    typ="openai"; auth="bearer"; [ "$p" = "anthropic" ] && { typ="anthropic"; auth="x-api-key"; }
+    maxc=$(jq -r --arg m "$model" '.models[$m].limit.context // 0' <<<"$e")
+    [ -f "$PROVIDERS" ] || { echo "ERR: $PROVIDERS missing — install CCF first"; exit 1; }
+    backup "$PROVIDERS"; tmp=$(mktemp)
+    jq --arg n "$p" --arg t "$typ" --arg ep "$ep" --arg a "$auth" --arg k "$env" --argjson mc "${maxc:-0}" \
+      '.providers[$n]={type:$t,endpoint:$ep,auth:$a,key_env:$k,max_tokens:8192,request_timeout:600,max_context_tokens:$mc,tok_per_char:0.27,zero_retention:false}' \
+      "$PROVIDERS" > "$tmp" && mv "$tmp" "$PROVIDERS"
+    echo "registered provider '$p' -> $ep (key_env=$env)"
+    if jq -e --arg n "$pname" 'any(.panel[];.name==$n)' "$PANEL" >/dev/null 2>&1; then
+      echo "panelist '$pname' already exists — left as-is"
+    else
+      backup "$PANEL"; tmp=$(mktemp)
+      jq --arg n "$pname" --arg p "$p" --arg m "$model" \
+        '.panel += [{name:$n,provider:$p,model:$m,role:"panelist",enabled:true,sensitive_ok:false}]' \
+        "$PANEL" > "$tmp" && mv "$tmp" "$PANEL"
+      echo "added panelist '$pname' ($p/$model), enabled, sensitive_ok=false"
+    fi
+    echo "NEXT: set the key ->  /fusion-config set-key $env   (or run ~/.claude/fusion/fusion-onboard)"
+    echo "      then probe   ->  ~/.claude/fusion/fusion-call $pname \"Reply: OK\""
+    ;;
+  *) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac

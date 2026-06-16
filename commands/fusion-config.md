@@ -27,11 +27,22 @@ mv "$tmp" "$F"; chmod 600 "$F"
 echo "$K updated (…${V: -4})"
 ```
 
-### list-catalog — show known providers + recommended models
-The catalog ships major providers with correct endpoints + current models. Read-only reference.
+### list-catalog — show curated providers + recommended models
+The catalog ships 20 major providers with correct endpoints + current models. Read-only reference.
 ```bash
 jq -r '.providers[] | "\(.name)\t\(.type)\t\(.endpoint)\tkey_env=\(.key_env)\tmodels=\([.models[].model]|join(","))"' ~/.claude/fusion/catalog.json
 ```
+
+### models.dev — the COMPLETE live registry (121+ providers, every model)
+The curated catalog is a subset. For the full list, use `ccf-models` (reads https://models.dev/api.json):
+```bash
+~/.claude/fusion/ccf-models providers              # every provider id + name
+~/.claude/fusion/ccf-models models <provider>      # a provider's models: context + $/Mtok
+~/.claude/fusion/ccf-models show <provider>        # base url, env, docs + a ready providers.json entry
+~/.claude/fusion/ccf-models add <provider> <model> [panelist]   # register provider + add panelist
+```
+After `add`, run `set-key <KEY_ENV>` (or `/fusion-onboard`) and probe. Providers with no direct base
+URL on models.dev (e.g. Anthropic) are reachable via `openrouter` or the curated catalog instead.
 
 ### add-provider --from-catalog <name> — register a catalogued provider (preferred)
 Copies the catalog entry into your live `providers.json` (no endpoint typing), then prompt for the key.

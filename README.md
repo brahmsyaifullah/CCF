@@ -96,16 +96,26 @@ Default roster (`panel.json`):
 
 ### Provider catalog
 
-CCF ships a catalog (`~/.claude/fusion/catalog.json`) of 13 major providers with correct
+CCF ships a catalog (`~/.claude/fusion/catalog.json`) of **20 providers** with correct
 OpenAI/Anthropic-compatible endpoints, recommended current models, and docs links — **disabled by
 default**, so you enable only what you have keys for:
 
-OpenAI · Anthropic · Google Gemini · DeepSeek · xAI Grok · Mistral · Moonshot (Kimi) · Groq ·
-OpenRouter · Together · Fireworks · Cerebras · Qwen.
+OpenAI · Anthropic · Google Gemini · DeepSeek · xAI Grok · Mistral · Moonshot · Kimi-Code ·
+MiniMax · Groq · Cerebras · Qwen · OpenRouter · Together · Fireworks · Novita · HuggingFace ·
+Xiaomi MiMo · Ollama (cloud) · **Ollama (local — keyless, air-gapped, zero-retention)**.
 
 Enable one via `/fusion-onboard`, or `/fusion-config add-provider --from-catalog <name>`. The
 catalog is read-only reference (refreshed on update); your live `providers.json` is never touched by it.
-Non-catalog providers: `/fusion-config add-provider` (manual) + `set-key`.
+Keyless/self-hosted endpoints (Ollama local) need no key — ideal for sensitive code.
+
+**The complete registry** lives at [models.dev](https://models.dev) — **121+ providers, every model**
+with context + cost. The curated catalog is a starter subset; for the full list use `ccf-models`:
+
+```bash
+~/.claude/fusion/ccf-models providers            # list all 121+ providers
+~/.claude/fusion/ccf-models models <provider>    # a provider's models (context, $/Mtok)
+~/.claude/fusion/ccf-models add <provider> <model> [panelist]   # register + add panelist
+```
 
 ### Panelist system prompt
 
