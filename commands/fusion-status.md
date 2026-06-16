@@ -29,5 +29,18 @@ Optionally, for each enabled panelist, run a one-token reachability probe:
 ~/.claude/fusion/fusion-call <name> "Reply with exactly: OK" | head -1
 ```
 
+For `--history`, summarize recent calls from the telemetry log instead of probing:
+
+```bash
+F=~/.claude/fusion
+echo "Last call: $(cat "$F/.last-call" 2>/dev/null || echo none)"
+if [ -f "$F/fusion.log" ]; then
+  echo "Recent runs (last 10):"; tail -10 "$F/fusion.log" | jq -r '"  \(.ts)  \(.panelist)  \(.status)  \(.latency_s)s"'
+  echo "Per-panelist avg latency + success rate:"
+  jq -s -r 'group_by(.panelist)[] | "  \(.[0].panelist): \(length) runs, \((map(.latency_s)|add/length)|floor)s avg, \(((map(select(.status=="ok"))|length)*100/length)|floor)% ok"' "$F/fusion.log"
+fi
+```
+
 Summarize: active y/n, which panelists are live vs misconfigured, any missing keys, and whether
-each enabled panelist is on a zero-retention transport (SaaS safety).
+each enabled panelist is on a zero-retention transport (SaaS safety). With `--history`, report the
+recent-run stats above (latency, success rate per panelist) from `fusion.log`.

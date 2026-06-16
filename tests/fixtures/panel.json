@@ -1,0 +1,22 @@
+{
+  "active": false,
+  "default_system_prompt": "",
+  "panel": [
+    {
+      "name": "guardp",
+      "provider": "guard",
+      "model": "m",
+      "role": "t",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "nokeyp",
+      "provider": "nokey",
+      "model": "m",
+      "role": "t",
+      "enabled": true,
+      "sensitive_ok": true
+    }
+  ]
+}

@@ -73,6 +73,19 @@ jq '(.panel[] | select(.name=="NAME") | .enabled) = true'   "$F" > "$tmp" && mv 
 jq '(.panel[] | select(.name=="NAME") | .model)   = "X"'    "$F" > "$tmp" && mv "$tmp" "$F"
 ```
 
+### load-preset / save-preset — swap the whole panel (#8)
+Built-in presets in `~/.claude/fusion/presets/`: `coding`, `research`, `writing`, `budget`, `max`.
+```bash
+# list presets
+for p in ~/.claude/fusion/presets/*.json; do jq -r '"\(.name)\t\(.description)\t["+([.panel[].name]|join(","))+"]"' "$p"; done
+# load-preset <name> — replace .panel, keep active + default_system_prompt; backup first
+F=~/.claude/fusion/panel.json; P=~/.claude/fusion/presets/$NAME.json; cp "$F" "$F.bak.$(date +%s)"
+tmp=$(mktemp); jq --slurpfile pre "$P" '.panel = $pre[0].panel' "$F" > "$tmp" && mv "$tmp" "$F"
+# save-preset <name> — snapshot current panel as a custom preset
+jq '{name:"'"$NAME"'",description:"custom",panel:.panel}' ~/.claude/fusion/panel.json > ~/.claude/fusion/presets/$NAME.json
+```
+Preset panelists must reference providers you have keys for (e.g. `sonnet`/`opus` need the `claude` CLI; `deepseek-flash` needs `opencode-go`). Loading never touches `secrets.env`.
+
 ### set-sensitive — mark a panelist safe/unsafe for proprietary code
 Set `sensitive_ok` true only for zero-retention, trusted providers. Free tiers → false.
 

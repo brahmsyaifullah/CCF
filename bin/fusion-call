@@ -88,6 +88,45 @@ if [ -z "$sysprompt" ] && [ -n "$name" ]; then
 fi
 [ -z "$sysprompt" ] && sysprompt=$(jq -r '.default_system_prompt // ""' "$PANEL" 2>/dev/null || echo "")
 
+# Retry/fallback (#4): retry transient network failures with backoff. Per-provider "max_retries".
+RETRIES=$(jq -r '.max_retries // 0' <<<"$pdef"); case "$RETRIES" in ''|*[!0-9]*) RETRIES=0;; esac
+t0=$(date +%s)
+RESP=""; RC=0
+
+# curl exit code -> actionable message (#3 hardening)
+curl_errmsg(){ case "$1" in
+  6)  echo "DNS resolution failed (curl 6) — check the endpoint host for '$provider'";;
+  7)  echo "connection refused (curl 7) — is the endpoint up? ($endpoint)";;
+  28) echo "timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout or shrink the prompt.";;
+  35|60|51) echo "SSL/TLS error (curl $1) talking to '$provider'";;
+  *)  echo "curl failed (exit $1) for provider '$provider'";;
+esac; }
+
+# POST with retry. Sets globals RESP + RC (call directly, NOT in $() — must reach parent shell).
+# Does not retry a full-budget timeout (28). Always returns 0 so set -e doesn't fire on RC.
+http_post(){
+  local tries=$((RETRIES+1)) a=0
+  RC=0
+  while [ "$a" -lt "$tries" ]; do
+    RESP=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" "$@") && { RC=0; return 0; } || RC=$?
+    [ "$RC" -eq 28 ] && return 0
+    a=$((a+1)); [ "$a" -lt "$tries" ] && sleep $((3*a))
+  done
+  return 0
+}
+
+# Append a JSONL telemetry line (#5) + a one-line status (#6). Best-effort, never fails the call.
+log_call(){ # status
+  local log="$FDIR/fusion.log" el=$(( $(date +%s) - t0 ))
+  [ -f "$log" ] && [ "$(wc -c <"$log" 2>/dev/null || echo 0)" -gt 5000000 ] && mv "$log" "$log.1" 2>/dev/null
+  printf '{"ts":"%s","panelist":"%s","provider":"%s","model":"%s","status":"%s","latency_s":%s,"bytes":%s}\n' \
+    "$(date -u +%FT%TZ)" "${name:-adhoc}" "$provider" "$model" "$1" "$el" "${#RESP}" >> "$log" 2>/dev/null || true
+  printf '%s\t%s/%s\t%s\t%ss\n' "${name:-adhoc}" "$provider" "$model" "$1" "$el" > "$FDIR/.last-call" 2>/dev/null || true
+}
+
+# Emit answer (or ERR), log status, exit. status derived from whether the answer is an ERR line.
+finish(){ local ans="$1"; case "$ans" in ERR:*) log_call error;; *) log_call ok;; esac; printf '%s\n' "$ans"; exit 0; }
+
 case "$ptype" in
   openai)
     jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
@@ -95,15 +134,14 @@ case "$ptype" in
         messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
                    + [{role:"user",content:$p}])}' > "$bodyfile"
     oauth=(); [ -n "$key" ] && oauth=(-H "Authorization: Bearer $key")
-    resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" \
-      ${oauth[@]+"${oauth[@]}"} -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
-    [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
-    [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
-    jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
+    http_post ${oauth[@]+"${oauth[@]}"} -H "Content-Type: application/json" --data-binary @"$bodyfile"
+    [ "$RC" -ne 0 ] && finish "ERR: $(curl_errmsg "$RC")"
+    ans=$(jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
            if (pick) != "" then pick
            elif (.choices[0].finish_reason // "") == "length" then "ERR: output truncated (finish_reason=length, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger> — a reasoning model likely spent it all on reasoning. (Not a context error; the input fit.)"
            elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason))."
-           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
+           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$RESP" 2>/dev/null) || ans="ERR: unparseable response from '$provider' (not JSON): $(printf '%s' "$RESP" | head -c 160)"
+    finish "$ans"
     ;;
   anthropic)
     jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
@@ -114,16 +152,17 @@ case "$ptype" in
     else
       hdr=(-H "Authorization: Bearer $key" -H "anthropic-version: 2023-06-01")
     fi
-    resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" "${hdr[@]}" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
-    [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
-    [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
-    jq -r --argjson mt "$maxtok" 'if (.content[0].text // "") != "" then .content[0].text
+    http_post "${hdr[@]}" -H "Content-Type: application/json" --data-binary @"$bodyfile"
+    [ "$RC" -ne 0 ] && finish "ERR: $(curl_errmsg "$RC")"
+    ans=$(jq -r --argjson mt "$maxtok" 'if (.content[0].text // "") != "" then .content[0].text
            elif (.stop_reason // "") == "max_tokens" then "ERR: output truncated (stop_reason=max_tokens, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger>. (Not a context error; the input fit.)"
            elif (.stop_reason // "") != "" then "ERR: empty output (stop_reason=\(.stop_reason)). Likely context window exceeded — shrink the prompt."
-           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
+           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$RESP" 2>/dev/null) || ans="ERR: unparseable response from '$provider' (not JSON): $(printf '%s' "$RESP" | head -c 160)"
+    finish "$ans"
     ;;
   claude-cli)
-    claude -p --model "$model" < "$promptfile" 2>&1
+    ans=$(claude -p --model "$model" < "$promptfile" 2>&1) || ans="ERR: claude CLI failed — $(printf '%s' "$ans" | head -c 160)"
+    RESP="$ans"; finish "$ans"
     ;;
   *)
     echo "ERR: unsupported provider type '$ptype'"; exit 1

@@ -1,0 +1,22 @@
+{
+  "name": "budget",
+  "description": "Cheapest fusion — flash variant, minimal quality loss",
+  "panel": [
+    {
+      "name": "glm",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "role": "long-context-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "deepseek-flash",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash",
+      "role": "fast-cheap",
+      "enabled": true,
+      "sensitive_ok": true
+    }
+  ]
+}

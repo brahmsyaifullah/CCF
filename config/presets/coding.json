@@ -1,0 +1,22 @@
+{
+  "name": "coding",
+  "description": "General coding — fast, 1M-context dual panel",
+  "panel": [
+    {
+      "name": "glm",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "role": "long-context-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "deepseek",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "role": "reasoning-code-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    }
+  ]
+}

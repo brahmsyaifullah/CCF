@@ -72,6 +72,8 @@ install -m 0644 "$SRC/config/providers.dist.json" "$FUSION_DIR/providers.dist.js
 install -m 0644 "$SRC/config/panel.dist.json"     "$FUSION_DIR/panel.dist.json"
 install -m 0644 "$SRC/config/secrets.env.example" "$FUSION_DIR/secrets.env.example"
 install -m 0644 "$SRC/config/catalog.json"        "$FUSION_DIR/catalog.json"
+mkdir -p "$FUSION_DIR/presets"
+for f in "$SRC/config/presets/"*.json; do install -m 0644 "$f" "$FUSION_DIR/presets/$(basename "$f")"; done
 install -m 0644 "$SRC/VERSION"                    "$FUSION_DIR/VERSION"
 printf '%s\n' "$REPO_SLUG" > "$FUSION_DIR/.ccf-source"
 say "installed dispatcher, hooks, update scripts, and slash commands"

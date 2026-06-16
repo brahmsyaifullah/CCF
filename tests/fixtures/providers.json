@@ -1,0 +1,22 @@
+{
+  "providers": {
+    "guard": {
+      "type": "openai",
+      "endpoint": "http://127.0.0.1:1/x",
+      "auth": "bearer",
+      "key_env": "",
+      "max_tokens": 256,
+      "request_timeout": 5,
+      "max_context_tokens": 2000,
+      "tok_per_char": 1.0
+    },
+    "nokey": {
+      "type": "openai",
+      "endpoint": "http://127.0.0.1:1/x",
+      "auth": "bearer",
+      "key_env": "CCF_DEFINITELY_UNSET_KEY",
+      "max_tokens": 256,
+      "request_timeout": 5
+    }
+  }
+}

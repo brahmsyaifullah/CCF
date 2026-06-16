@@ -7,6 +7,10 @@ config/secrets.env
 .last-update-check
 .ccf-source
 .update-notice
+.last-call
+fusion.log
+fusion.log.1
+.models-dev-cache.json
 *.bak
 *.ccf-bak
 

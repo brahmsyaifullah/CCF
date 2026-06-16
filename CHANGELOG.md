@@ -3,6 +3,26 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.3.0] — 2026-06-17
+
+Roadmap items: dispatcher hardening (#3), retry/fallback (#4), logging (#5), progress (#6),
+panel presets (#8), test suite + CI (#1).
+
+### Added
+- **Retry/fallback** (#4): per-provider `max_retries` (default 0) with linear backoff; transient
+  network failures retried, full-budget timeouts not.
+- **Telemetry log** (#5): each call appends JSONL to `~/.claude/fusion/fusion.log`
+  (panelist, provider, model, status, latency_s, bytes); auto-rotates at ~5 MB.
+- **Progress** (#6): `~/.claude/fusion/.last-call` written each call; `/fusion-status --history`
+  shows recent runs + per-panelist avg latency and success rate.
+- **Dispatcher hardening** (#3): curl exit-code → actionable messages (DNS 6, connect 7, SSL 35/51/60,
+  timeout 28); unparseable (non-JSON) responses reported instead of crashing.
+- **Panel presets** (#8): `coding`, `research`, `writing`, `budget`, `max` in `config/presets/`;
+  `/fusion-config load-preset` / `save-preset` (backs up, never touches secrets).
+- **Test suite + CI** (#1): bats offline tests for the dispatcher error paths (unknown panelist/provider,
+  empty prompt, missing key, context guard) + JSON/preset validity; GitHub Actions runs them on
+  Ubuntu + macOS with a secret scan.
+
 ## [1.2.0] — 2026-06-17
 
 ### Added

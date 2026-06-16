@@ -1,0 +1,22 @@
+{
+  "name": "writing",
+  "description": "Content/copywriting — GLM + Claude voice",
+  "panel": [
+    {
+      "name": "glm",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "role": "long-context-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "sonnet",
+      "provider": "claude-sub",
+      "model": "sonnet",
+      "role": "fast-reasoning",
+      "enabled": true,
+      "sensitive_ok": true
+    }
+  ]
+}

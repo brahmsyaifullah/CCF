@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq + bats
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y jq bats
+          else
+            brew install jq bats-core
+          fi
+
+      - name: Shellcheck syntax (bash -n)
+        run: |
+          for s in bin/* hooks/*.sh install.sh; do
+            bash -n "$s" && echo "ok: $s"
+          done
+
+      - name: Validate JSON
+        run: |
+          for j in config/*.json config/presets/*.json tests/fixtures/*.json; do
+            jq -e . "$j" >/dev/null && echo "ok: $j"
+          done
+
+      - name: Run bats suite
+        run: ./tests/run_tests.sh
+
+      - name: Secret scan (no keys in repo)
+        run: |
+          if grep -rInE '(sk-[A-Za-z0-9]{18}|gsk_[A-Za-z0-9]{18}|AQ\.[A-Za-z0-9]{12}|[0-9a-f]{32}\.[A-Za-z0-9]{16})' \
+               --exclude-dir=.git .; then
+            echo "::error::possible secret committed"; exit 1
+          fi
+          echo "clean"

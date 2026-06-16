@@ -1,0 +1,30 @@
+{
+  "name": "research",
+  "description": "Deep research — adds Claude diversity for blind-spot coverage",
+  "panel": [
+    {
+      "name": "glm",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "role": "long-context-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "deepseek",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "role": "reasoning-code-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "sonnet",
+      "provider": "claude-sub",
+      "model": "sonnet",
+      "role": "fast-reasoning",
+      "enabled": true,
+      "sensitive_ok": true
+    }
+  ]
+}
