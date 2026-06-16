@@ -5,8 +5,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 
 ## [1.3.0] — 2026-06-17
 
-Roadmap items: dispatcher hardening (#3), retry/fallback (#4), logging (#5), progress (#6),
-panel presets (#8), test suite + CI (#1).
+Roadmap items: test suite + CI (#1), dispatcher hardening (#3), retry/fallback (#4), logging (#5),
+progress (#6), panel presets (#8), Homebrew formula (#9).
 
 ### Added
 - **Retry/fallback** (#4): per-provider `max_retries` (default 0) with linear backoff; transient
@@ -22,6 +22,8 @@ panel presets (#8), test suite + CI (#1).
 - **Test suite + CI** (#1): bats offline tests for the dispatcher error paths (unknown panelist/provider,
   empty prompt, missing key, context guard) + JSON/preset validity; GitHub Actions runs them on
   Ubuntu + macOS with a secret scan.
+- **Homebrew formula** (#9): `Formula/ccf.rb` (+ `docs/HOMEBREW.md`) — `brew install` stages CCF and
+  exposes a `ccf` command that runs the installer. Tap repo setup documented.
 
 ## [1.2.0] — 2026-06-17
 
