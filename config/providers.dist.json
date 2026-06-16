@@ -1,0 +1,48 @@
+{
+  "providers": {
+    "claude-sub": {
+      "type": "claude-cli",
+      "max_tokens": 8192,
+      "max_context_tokens": 200000,
+      "tok_per_char": 0.25,
+      "zero_retention": true,
+      "note": "Anthropic subscription via local claude CLI. No API key. Separate context from the orchestrator. Opus/Sonnet window ~200K tokens."
+    },
+    "zai": {
+      "type": "anthropic",
+      "endpoint": "https://api.z.ai/api/anthropic/v1/messages",
+      "auth": "bearer",
+      "key_env": "ZAI_API_KEY",
+      "max_tokens": 8192,
+      "request_timeout": 600,
+      "max_context_tokens": 1048576,
+      "tok_per_char": 0.264,
+      "zero_retention": true,
+      "note": "z.ai GLM. Use bare glm-5.2 (the [1m] suffix is rejected). 1M VERIFIED 2026-06-16 via needle test: ceiling 1,048,576 tok, ~0.264 tok/char (keep prompts <=~3.9M chars). Over-limit returns HTTP 200 + empty text + stop_reason=model_context_window_exceeded (NOT an error). 1M prefill ~40-60s — 600s budget."
+    },
+    "opencode-go": {
+      "type": "openai",
+      "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "OPENCODE_GO_KEY",
+      "max_tokens": 8192,
+      "request_timeout": 600,
+      "max_context_tokens": 1048565,
+      "tok_per_char": 0.295,
+      "zero_retention": true,
+      "note": "OpenCode Go flat-rate subscription. Paid-tier models covered, zero-retention. deepseek-v4-pro is a reasoning model (returns reasoning_content, SLOW). 1M VERIFIED 2026-06-16 via needle test: ceiling 1,048,565 tok (provider-stated), ~0.295 tok/char (keep prompts <=~3.55M chars). Reasoning models need max_tokens>=512 or the answer is starved by reasoning (finish=length). 600s budget."
+    },
+    "opencode-zen": {
+      "type": "openai",
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "auth": "bearer",
+      "key_env": "OPENCODE_ZEN_KEY",
+      "max_tokens": 4096,
+      "request_timeout": 300,
+      "max_context_tokens": 131072,
+      "tok_per_char": 0.27,
+      "zero_retention": false,
+      "note": "OpenCode Zen pay-per-token. Free models are NOT zero-retention. Do NOT send proprietary code here. Context limit conservative/unverified (128K assumed)."
+    }
+  }
+}

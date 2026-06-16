@@ -1,0 +1,16 @@
+# Secrets — NEVER commit. Only the example template is tracked.
+secrets.env
+config/secrets.env
+**/secrets.env
+
+# Local install/runtime artifacts
+.last-update-check
+.ccf-source
+.update-notice
+*.bak
+*.ccf-bak
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp

@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# fusion-call — universal panelist dispatcher for the Fusion system.
+#
+#   fusion-call <panelist-name> "prompt"
+#   fusion-call <panelist-name> < promptfile
+#   fusion-call --provider <prov> --model <model> "prompt"   (ad-hoc, bypass roster)
+#
+# Reads ~/.claude/fusion/{providers.json,panel.json,secrets.env}.
+# Prints the model's text answer to stdout. Errors prefixed "ERR:".
+set -euo pipefail
+
+FDIR="$HOME/.claude/fusion"
+PROVIDERS="$FDIR/providers.json"
+PANEL="$FDIR/panel.json"
+SECRETS="$FDIR/secrets.env"
+
+[ -f "$SECRETS" ] && { set -a; . "$SECRETS"; set +a; }
+
+provider=""; model=""; name=""
+if [ "${1:-}" = "--provider" ]; then
+  provider="$2"; shift 2
+  [ "${1:-}" = "--model" ] && { model="$2"; shift 2; }
+else
+  name="${1:?usage: fusion-call <panelist> [prompt]  |  fusion-call --provider <p> --model <m> [prompt]}"
+  shift || true
+  entry=$(jq -c --arg n "$name" '.panel[] | select(.name==$n)' "$PANEL" 2>/dev/null || true)
+  [ -z "$entry" ] && { echo "ERR: unknown panelist '$name' (see panel.json)"; exit 1; }
+  provider=$(jq -r '.provider' <<<"$entry")
+  model=$(jq -r '.model' <<<"$entry")
+fi
+
+prompt="${*:-$(cat)}"
+[ -z "$prompt" ] && { echo "ERR: empty prompt"; exit 1; }
+
+# Materialize prompt + request body to temp files. Large-context prompts (up to ~1M
+# tokens / multi-MB) exceed ARG_MAX, so they cannot be passed as argv to curl/jq/claude.
+# printf is a shell builtin (no exec), so writing the prompt this way is ARG_MAX-safe.
+promptfile=$(mktemp "${TMPDIR:-/tmp}/fusion-prompt.XXXXXX")
+bodyfile=$(mktemp "${TMPDIR:-/tmp}/fusion-body.XXXXXX")
+trap 'rm -f "$promptfile" "$bodyfile"' EXIT
+printf '%s' "$prompt" > "$promptfile"
+
+pdef=$(jq -c --arg p "$provider" '.providers[$p]' "$PROVIDERS" 2>/dev/null || true)
+[ -z "$pdef" ] || [ "$pdef" = "null" ] && { echo "ERR: unknown provider '$provider'"; exit 1; }
+
+ptype=$(jq -r '.type' <<<"$pdef")
+endpoint=$(jq -r '.endpoint // ""' <<<"$pdef")
+auth=$(jq -r '.auth // "bearer"' <<<"$pdef")
+key_env=$(jq -r '.key_env // ""' <<<"$pdef")
+maxtok=$(jq -r '.max_tokens // 8192' <<<"$pdef")
+# Total request budget. Reasoning models on large prompts need minutes, not seconds.
+# Override per provider with "request_timeout" in providers.json. Env CALL_TIMEOUT wins.
+timeout="${CALL_TIMEOUT:-$(jq -r '.request_timeout // 600' <<<"$pdef")}"
+key=""; [ -n "$key_env" ] && key="${!key_env:-}"
+
+if [ "$ptype" != "claude-cli" ] && [ -z "$key" ]; then
+  echo "ERR: missing key \$$key_env for provider '$provider' (set it in secrets.env via /fusion-config)"; exit 1
+fi
+
+# Context-window guard (verified ceilings, 2026-06-16). Estimate input tokens from prompt
+# bytes * provider tok_per_char and fail BEFORE a wasted multi-MB upload that the API would
+# reject with an empty 200 (model_context_window_exceeded). Skip if provider omits the limits.
+max_ctx=$(jq -r '.max_context_tokens // 0' <<<"$pdef")
+tpc=$(jq -r '.tok_per_char // 0' <<<"$pdef")
+if [ "$max_ctx" != "0" ] && [ "$tpc" != "0" ]; then
+  pchars=$(wc -c < "$promptfile")
+  est_in=$(awk -v c="$pchars" -v r="$tpc" 'BEGIN{printf "%d", c*r}')
+  # input must fit alongside the reserved output (max_tokens) plus a small safety buffer
+  allow_in=$(awk -v m="$max_ctx" -v o="$maxtok" 'BEGIN{printf "%d", m-o-512}')
+  if [ "$est_in" -gt "$allow_in" ]; then
+    max_chars=$(awk -v a="$allow_in" -v r="$tpc" 'BEGIN{printf "%d", a/r}')
+    echo "ERR: prompt ~${est_in} tok exceeds ${model}'s usable window (~${allow_in} tok input, ceiling ${max_ctx}, reserving ${maxtok} for output). Shrink to <=~${max_chars} chars or split. Override the estimate only if you know it fits."
+    exit 1
+  fi
+fi
+# Reasoning models starve their answer if max_tokens is tiny (reasoning eats the budget,
+# finish=length, empty answer). Floor it.
+[ "$maxtok" -lt 512 ] && maxtok=512
+
+case "$ptype" in
+  openai)
+    jq -n --arg m "$model" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+      '{model:$m,max_tokens:$mt,messages:[{role:"user",content:$p}]}' > "$bodyfile"
+    resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" \
+      -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
+    [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
+    [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
+    jq -r 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
+           if (pick) != "" then pick
+           elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason)). Likely context window exceeded — shrink the prompt."
+           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
+    ;;
+  anthropic)
+    jq -n --arg m "$model" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+      '{model:$m,max_tokens:$mt,messages:[{role:"user",content:$p}]}' > "$bodyfile"
+    if [ "$auth" = "x-api-key" ]; then
+      hdr=(-H "x-api-key: $key" -H "anthropic-version: 2023-06-01")
+    else
+      hdr=(-H "Authorization: Bearer $key" -H "anthropic-version: 2023-06-01")
+    fi
+    resp=$(curl -s --connect-timeout 15 -m "$timeout" "$endpoint" "${hdr[@]}" -H "Content-Type: application/json" --data-binary @"$bodyfile") && rc=0 || rc=$?
+    [ "$rc" -eq 28 ] && { echo "ERR: timeout after ${timeout}s (provider '$provider', model '$model'). Raise request_timeout in providers.json or shrink the prompt."; exit 1; }
+    [ "$rc" -ne 0 ] && { echo "ERR: curl failed (exit $rc) for provider '$provider'"; exit 1; }
+    jq -r 'if (.content[0].text // "") != "" then .content[0].text
+           elif (.stop_reason // "") != "" then "ERR: empty output (stop_reason=\(.stop_reason)). Likely context window exceeded — shrink the prompt (glm-5.2 ceiling ≈1.04M tokens)."
+           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$resp"
+    ;;
+  claude-cli)
+    claude -p --model "$model" < "$promptfile" 2>&1
+    ;;
+  *)
+    echo "ERR: unsupported provider type '$ptype'"; exit 1
+    ;;
+esac

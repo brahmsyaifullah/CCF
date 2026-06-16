@@ -1,0 +1,55 @@
+{
+  "active": false,
+  "judge": "running-session",
+  "_comment": "judge = the live Claude Code orchestrator (Opus 4.8). Panelists below are called via fusion-call. enabled=true means part of the default panel. sensitive_ok=false blocks proprietary/customer code from being sent (non-zero-retention or untrusted providers). Context (verified 2026-06-16): glm (zai) and deepseek (opencode-go) both ~1,048,576-token windows; fusion-call guards oversize prompts before upload using providers.json max_context_tokens/tok_per_char.",
+  "panel": [
+    {
+      "name": "glm",
+      "provider": "zai",
+      "model": "glm-5.2",
+      "role": "long-context-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "deepseek",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "role": "reasoning-code-1M",
+      "enabled": true,
+      "sensitive_ok": true
+    },
+    {
+      "name": "sonnet",
+      "provider": "claude-sub",
+      "model": "sonnet",
+      "role": "fast-reasoning",
+      "enabled": false,
+      "sensitive_ok": true
+    },
+    {
+      "name": "opus",
+      "provider": "claude-sub",
+      "model": "opus",
+      "role": "deep-reasoning",
+      "enabled": false,
+      "sensitive_ok": true
+    },
+    {
+      "name": "deepseek-flash",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-flash",
+      "role": "fast-cheap",
+      "enabled": false,
+      "sensitive_ok": true
+    },
+    {
+      "name": "north-code",
+      "provider": "opencode-zen",
+      "model": "north-mini-code-free",
+      "role": "code-free",
+      "enabled": false,
+      "sensitive_ok": false
+    }
+  ]
+}
