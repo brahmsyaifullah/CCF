@@ -3,6 +3,16 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.6.2] — 2026-06-17
+
+### Fixed
+- **deepseek / opencode-go usability**: raised opencode-go `max_tokens` 8192 → 64000. deepseek-v4-pro
+  is a reasoning model — on complex tasks its internal reasoning consumed the entire 8192 output
+  budget and the answer came back truncated (`finish_reason=length`). 8192 was a hard ceiling for
+  every user on hard prompts. max_tokens is a *cap* (successful answers stop early), so the higher
+  value only prevents truncation — no latency/cost penalty on a flat-rate sub. Verified: two
+  benchmark tasks that returned 0.4KB truncated now return full 13–16KB answers.
+
 ## [1.6.1] — 2026-06-17
 
 ### Changed

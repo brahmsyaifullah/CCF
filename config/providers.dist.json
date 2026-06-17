@@ -25,12 +25,12 @@
       "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
       "auth": "bearer",
       "key_env": "OPENCODE_GO_KEY",
-      "max_tokens": 8192,
+      "max_tokens": 64000,
       "request_timeout": 600,
       "max_context_tokens": 1048565,
       "tok_per_char": 0.295,
       "zero_retention": true,
-      "note": "OpenCode Go flat-rate subscription. Paid-tier models covered, zero-retention. deepseek-v4-pro is a reasoning model (returns reasoning_content, SLOW). 1M VERIFIED 2026-06-16 via needle test: ceiling 1,048,565 tok (provider-stated), ~0.295 tok/char (keep prompts <=~3.55M chars). Reasoning models need max_tokens>=512 or the answer is starved by reasoning (finish=length). 600s budget."
+      "note": "OpenCode Go flat-rate subscription. Paid-tier models covered, zero-retention. deepseek-v4-pro is a REASONING model — its internal reasoning consumes the output budget, so on complex tasks an 8192 cap truncated the answer (finish_reason=length). max_tokens raised to 64000 (model output limit is 384K); a cap only prevents truncation, successful answers stop early so there is no latency/cost penalty. 1M VERIFIED 2026-06-16 via needle test: ceiling 1,048,565 tok, ~0.295 tok/char (keep prompts <=~3.55M chars). 600s budget."
     },
     "opencode-zen": {
       "type": "openai",
