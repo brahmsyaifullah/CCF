@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# ccf-analytics — text dashboard over the Fusion telemetry log.
+#
+#   ccf-analytics [--days N]
+#
+# Pure bash + jq. NO web server. Reads ~/.claude/fusion/fusion.log (JSONL written
+# by fusion-call) and prints: total runs, success rate, per-panelist avg latency +
+# success %, estimated cost saved vs OpenRouter Fusion ($0.50/call), and the last
+# few errors. Log rotates to fusion.log.1 at 5MB — the archive is folded in.
+set -euo pipefail
+
+FDIR="${CLAUDE_HOME:-$HOME/.claude}/fusion"
+LOG="$FDIR/fusion.log"
+# What one Fusion call would cost on OpenRouter Fusion. Override per environment.
+COST_PER_CALL="${CCF_COST_PER_CALL:-0.50}"
+
+DAYS=""
+
+usage() {
+  cat <<EOF
+Usage: ccf-analytics [--days N] [-h|--help]
+
+  --days N   only count runs from the last N days (default: all time)
+  --help     show this help
+
+Reads $LOG (JSONL, written by fusion-call).
+Estimates cost saved vs OpenRouter Fusion at \$${COST_PER_CALL}/call
+(override with CCF_COST_PER_CALL).
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --days) DAYS="${2:?--days needs a number}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ccf-analytics: unknown arg '$1' (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+command -v jq  >/dev/null 2>&1 || { echo "ccf-analytics needs jq (not found in PATH)." >&2; exit 1; }
+[ -f "$LOG" ] || { echo "No telemetry log at $LOG."; echo "Run a /fusion task first — fusion.log appears after the first panel call."; exit 0; }
+
+# Date-window cutoff (epoch seconds). Supports GNU date (Linux) and BSD date (macOS).
+cutoff=""
+if [ -n "$DAYS" ]; then
+  cutoff="$(date -u -d "$DAYS days ago" +%s 2>/dev/null || date -u -v-${DAYS}d +%s 2>/dev/null || true)"
+  [ -n "$cutoff" ] || { echo "ccf-analytics: could not compute the --days window on this system." >&2; exit 1; }
+fi
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/ccf-an.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+# Parse every log line (current + rotated archive) defensively: corrupt/partial
+# trailing lines are dropped via fromjson? // empty. Apply the date window if set.
+filter_jq() {
+  if [ -n "$cutoff" ]; then
+    jq -Rc --argjson c "$cutoff" 'fromjson? // empty | select((.ts|fromdateiso8601) >= $c)'
+  else
+    jq -Rc 'fromjson? // empty'
+  fi
+}
+
+{
+  for f in "$LOG.1" "$LOG"; do
+    [ -f "$f" ] || continue
+    filter_jq < "$f" 2>/dev/null || true
+  done
+} > "$tmp"
+
+total="$(jq -s 'length' "$tmp")"
+ok="$(jq -s 'map(select(.status == "ok")) | length' "$tmp")"
+err=$(( total - ok ))
+
+# ---- header (Unicode box; widths are count-based, so it renders in any locale) ----
+hr() { local n="$2" i; for (( i = 0; i < n; i++ )); do printf '%s' "$1"; done; }
+W=50
+echo
+printf '╔%s╗\n' "$(hr '═' "$W")"
+printf '║%s%s%s║\n' "$(hr ' ' 9)" 'CCF FUSION - ANALYTICS DASHBOARD' "$(hr ' ' 9)"
+printf '╚%s╝\n' "$(hr '═' "$W")"
+
+if [ "$total" -eq 0 ]; then
+  echo
+  echo "No runs in window."
+  [ -n "$DAYS" ] && echo "(window: last ${DAYS} days)"
+  echo "Log: $LOG"
+  exit 0
+fi
+
+window_label="all time"
+[ -n "$DAYS" ] && window_label="last ${DAYS} days"
+succ_pct="$(awk -v o="$ok" -v t="$total" 'BEGIN{printf "%.1f", o*100/t}')"
+
+echo
+echo "Log:    $LOG"
+echo "Window: $window_label"
+echo
+echo "TOTAL RUNS        $total"
+echo "SUCCESS RATE      ${succ_pct}%   (${ok} ok / ${err} error)"
+
+# ---- per-panelist table ----
+echo
+printf '  %-16s %5s  %4s   %10s\n' "PANELIST" "RUNS" "OK%" "AVG LATENCY"
+jq -rs '
+    sort_by(.panelist)
+  | group_by(.panelist)[]
+  | .[0].panelist as $n
+  | length as $r
+  | (map(select(.status == "ok")) | length) as $okn
+  | (((map(.latency_s) | add) // 0) / $r) as $avg
+  | [$n, $r, $okn, ($avg * 10 | floor / 10)] | @tsv
+' "$tmp" | while IFS=$'\t' read -r name runs okn avg; do
+  p=0; { [ "${runs:-0}" -gt 0 ]; } 2>/dev/null && p=$(( okn * 100 / runs ))
+  printf '  %-16s %5d  %3d%%   %9.1fs\n' "$name" "$runs" "$p" "$avg"
+done
+
+# ---- cost saved ----
+saved="$(awk -v r="$total" -v c="$COST_PER_CALL" 'BEGIN{printf "%.2f", r*c}')"
+echo
+echo "EST. COST SAVED   \$${saved}   (${total} runs × \$${COST_PER_CALL} vs OpenRouter Fusion)"
+
+# ---- recent errors ----
+echo
+echo "RECENT ERRORS (last 5)"
+if [ "$err" -eq 0 ]; then
+  echo "  (none)"
+else
+  jq -rs '
+      [ .[] | select(.status == "error") ]
+    | sort_by(.ts)
+    | .[-5:]
+    | .[]
+    | [ .ts, .panelist, ((.provider // "?") + "/" + (.model // "?")), (.latency_s // 0), (.bytes // 0) ]
+    | @tsv
+  ' "$tmp" | while IFS=$'\t' read -r ts name prov lat b; do
+    printf '  %s  %-12s %-24s %4ss  %sB\n' "$ts" "$name" "$prov" "$lat" "$b"
+  done
+fi
+
+echo

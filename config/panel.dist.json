@@ -51,6 +51,14 @@
       "role": "code-free",
       "enabled": false,
       "sensitive_ok": false
+    },
+    {
+      "name": "gpt",
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "role": "frontier-reasoning",
+      "enabled": false,
+      "sensitive_ok": true
     }
   ]
 }

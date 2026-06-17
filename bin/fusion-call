@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # fusion-call — universal panelist dispatcher for the Fusion system.
 #
-#   fusion-call <panelist-name> "prompt"
-#   fusion-call <panelist-name> < promptfile
+#   fusion-call [--search] <panelist-name> "prompt"
+#   fusion-call [--search] <panelist-name> < promptfile
 #   fusion-call --provider <prov> --model <model> "prompt"   (ad-hoc, bypass roster)
 #
 # Reads ~/.claude/fusion/{providers.json,panel.json,secrets.env}.
@@ -16,12 +16,23 @@ SECRETS="$FDIR/secrets.env"
 
 [ -f "$SECRETS" ] && { set -a; . "$SECRETS"; set +a; }
 
+# --- --search flag (Tavily web search tool calling) ---
+SEARCH_MODE=false
+if [ "${1:-}" = "--search" ]; then
+  SEARCH_MODE=true
+  shift
+fi
+
+# --- Tavily config ---
+TAVILY_KEY="${TAVILY_API_KEY:-}"
+SEARCH_TURNS="${MAX_SEARCH_TURNS:-3}"
+
 provider=""; model=""; name=""
 if [ "${1:-}" = "--provider" ]; then
   provider="$2"; shift 2
   [ "${1:-}" = "--model" ] && { model="$2"; shift 2; }
 else
-  name="${1:?usage: fusion-call <panelist> [prompt]  |  fusion-call --provider <p> --model <m> [prompt]}"
+  name="${1:?usage: fusion-call [--search] <panelist> [prompt]  |  fusion-call --provider <p> --model <m> [prompt]}"
   shift || true
   entry=$(jq -c --arg n "$name" '.panel[] | select(.name==$n)' "$PANEL" 2>/dev/null || true)
   [ -z "$entry" ] && { echo "ERR: unknown panelist '$name' (see panel.json)"; exit 1; }
@@ -53,10 +64,10 @@ maxtok="${CALL_MAX_TOKENS:-$(jq -r '.max_tokens // 8192' <<<"$pdef")}"
 # Total request budget. Reasoning models on large prompts need minutes, not seconds.
 # Override per provider with "request_timeout" in providers.json. Env CALL_TIMEOUT wins.
 timeout="${CALL_TIMEOUT:-$(jq -r '.request_timeout // 600' <<<"$pdef")}"
-key=""; [ -n "$key_env" ] && key="${!key_env:-}"
+key=""; [ -n "$key_env" ] && [ "$key_env" != "none" ] && key="${!key_env:-}"
 
 # Keyless providers (e.g. self-hosted Ollama at localhost): key_env empty or "none" → no auth.
-if [ "$ptype" != "claude-cli" ] && [ -n "$key_env" ] && [ "$key_env" != "none" ] && [ -z "$key" ]; then
+if [ "$ptype" != "claude-cli" ] && [ "$ptype" != "codex-responses" ] && [ -n "$key_env" ] && [ "$key_env" != "none" ] && [ -z "$key" ]; then
   echo "ERR: missing key \$$key_env for provider '$provider' (set it in secrets.env via /fusion-config)"; exit 1
 fi
 
@@ -115,6 +126,45 @@ http_post(){
   return 0
 }
 
+# POST with streaming (for codex-responses which requires stream:true).
+# Collects SSE output and extracts text from response.output_text.delta events.
+http_post_sse(){
+  local tries=$((RETRIES+1)) a=0
+  RC=0
+  while [ "$a" -lt "$tries" ]; do
+    local raw
+    raw=$(curl -s --no-buffer --connect-timeout 15 -m "$timeout" "$@" 2>&1) && { RC=0; } || RC=$?
+    [ "$RC" -eq 28 ] && { RESP="$raw"; return 0; }
+    if [ $RC -eq 0 ]; then
+      # Check for HTTP errors in the response body
+      if printf '%s' "$raw" | grep -q '"detail"' 2>/dev/null; then
+        RESP="$raw"; return 0
+      fi
+      # Parse SSE: extract text from response.output_text.delta events + response.completed
+      local extracted=""
+      extracted=$(printf '%s\n' "$raw" | grep '^data: ' | while IFS= read -r line; do
+        data="${line#data: }"
+        [ "$data" = "[DONE]" ] && continue
+        etype=$(printf '%s' "$data" | jq -r '.type // empty' 2>/dev/null) || continue
+        if [ "$etype" = "response.output_text.delta" ]; then
+          printf '%s' "$(printf '%s' "$data" | jq -r '.delta // empty' 2>/dev/null)"
+        elif [ "$etype" = "response.completed" ]; then
+          printf '%s' "$(printf '%s' "$data" | jq -r '[.response.output[].content[]? | select(.type=="output_text") | .text] | join("\n")' 2>/dev/null)"
+        fi
+      done 2>/dev/null)
+      if [ -n "$extracted" ]; then
+        # Wrap in a fake JSON for the finish() parser
+        RESP=$(jq -n --arg t "$extracted" '{choices:[{message:{content:$t},finish_reason:"stop"}]}')
+        return 0
+      else
+        RESP="$raw"; return 0
+      fi
+    fi
+    a=$((a+1)); [ "$a" -lt "$tries" ] && sleep $((3*a))
+  done
+  return 0
+}
+
 # Append a JSONL telemetry line (#5) + a one-line status (#6). Best-effort, never fails the call.
 log_call(){ # status
   local log="$FDIR/fusion.log" el=$(( $(date +%s) - t0 ))
@@ -127,21 +177,99 @@ log_call(){ # status
 # Emit answer (or ERR), log status, exit. status derived from whether the answer is an ERR line.
 finish(){ local ans="$1"; case "$ans" in ERR:*) log_call error;; *) log_call ok;; esac; printf '%s\n' "$ans"; exit 0; }
 
+# Web search tool definition (OpenAI function calling format)
+WEB_SEARCH_TOOL='[{"type":"function","function":{"name":"web_search","description":"Search the web for current, factual information, documentation, API references, pricing, or current events.","parameters":{"type":"object","properties":{"query":{"description":"The search query string","type":"string"}},"required":["query"]}}}]'
+
 case "$ptype" in
   openai)
-    jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
-      '{model:$m,max_tokens:$mt,
-        messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
-                   + [{role:"user",content:$p}])}' > "$bodyfile"
-    oauth=(); [ -n "$key" ] && oauth=(-H "Authorization: Bearer $key")
-    http_post ${oauth[@]+"${oauth[@]}"} -H "Content-Type: application/json" --data-binary @"$bodyfile"
-    [ "$RC" -ne 0 ] && finish "ERR: $(curl_errmsg "$RC")"
-    ans=$(jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
-           if (pick) != "" then pick
-           elif (.choices[0].finish_reason // "") == "length" then "ERR: output truncated (finish_reason=length, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger> — a reasoning model likely spent it all on reasoning. (Not a context error; the input fit.)"
-           elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason))."
-           else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$RESP" 2>/dev/null) || ans="ERR: unparseable response from '$provider' (not JSON): $(printf '%s' "$RESP" | head -c 160)"
-    finish "$ans"
+    if [ "$SEARCH_MODE" = "true" ] && [ -n "$TAVILY_KEY" ]; then
+      # === MULTI-TURN WITH WEB SEARCH ===
+      msgfile=$(mktemp "${TMPDIR:-/tmp}/fusion-msgs.XXXXXX")
+      trap 'rm -f "$promptfile" "$bodyfile" "$msgfile" "${msgfile}.results" "${msgfile}.resp"' EXIT
+
+      jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+        '{model:$m, max_tokens:$mt,
+          messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
+                     + [{role:"user",content:$p}]),
+          tools: '"$WEB_SEARCH_TOOL"'}' > "$msgfile"
+
+      for turn in $(seq 1 $((SEARCH_TURNS + 1))); do
+        http_post -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary @"$msgfile"
+        [ "$RC" -ne 0 ] && { rm -f "$msgfile"; finish "ERR: $(curl_errmsg "$RC")"; }
+
+        # Check for tool_calls
+        has_tools=$(jq -r '.choices[0].message.tool_calls // [] | length' <<<"$RESP" 2>/dev/null)
+
+        if [ "$has_tools" = "0" ] || [ -z "$has_tools" ]; then
+          # No tool calls — final answer
+          rm -f "$msgfile"
+          ans=$(jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // "";
+            if (pick) != "" then pick
+            elif (.choices[0].finish_reason // "") == "length" then "ERR: output truncated (finish_reason=length, max_tokens=\($mt)). Raise CALL_MAX_TOKENS."
+            else "ERR: "+(.error.message // "no content") end' <<<"$RESP" 2>/dev/null) \
+            || ans="ERR: unparseable response from '$provider'"
+          finish "$ans"
+        fi
+
+        # Execute Tavily searches for each tool call
+        echo '[]' > "${msgfile}.results"
+        num_calls="$has_tools"
+        for i in $(seq 0 $((num_calls - 1))); do
+          call_id=$(jq -r ".choices[0].message.tool_calls[$i].id" <<<"$RESP")
+          query=$(jq -r ".choices[0].message.tool_calls[$i].function.arguments | fromjson.query" <<<"$RESP" 2>/dev/null)
+          query_escaped=$(jq -nR --arg q "$query" '$q')
+
+          search_resp=$(curl -s --connect-timeout 10 -m 30 \
+            -H "Authorization: Bearer $TAVILY_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":$query_escaped,\"max_results\":5,\"search_depth\":\"advanced\"}" \
+            "https://api.tavily.com/search" 2>/dev/null) || search_resp='{"results":[]}'
+
+          search_text=$(printf '%s' "$search_resp" | jq -r '[.results[]? | "• \(.title)\n  URL: \(.url)\n  \(.content[:400])"] | join("\n\n")' 2>/dev/null)
+          [ -z "$search_text" ] && search_text="No results found."
+
+          jq --arg cid "$call_id" --arg txt "$search_text" \
+            '. + [{role:"tool", tool_call_id:$cid, content:$txt}]' "${msgfile}.results" > "${msgfile}.results.tmp"
+          mv "${msgfile}.results.tmp" "${msgfile}.results"
+        done
+
+        # Rebuild request: original messages + assistant message (with tool_calls) + tool results
+        # Write RESP to temp file (safe for large responses, avoids ARG_MAX)
+        printf '%s' "$RESP" > "${msgfile}.resp"
+        jq -n --slurpfile orig "$msgfile" --slurpfile results "${msgfile}.results" \
+          --slurpfile resp "${msgfile}.resp" \
+          --arg m "$model" --argjson mt "$maxtok" --argjson tools "$WEB_SEARCH_TOOL" \
+          '($orig[0]) | .model=$m | .max_tokens=$mt | .tools=$tools |
+           .messages += [$resp[0].choices[0].message] + $results[0]' > "${msgfile}.new" 2>/dev/null
+
+        if [ -s "${msgfile}.new" ]; then
+          mv "${msgfile}.new" "$msgfile"
+        else
+          rm -f "$msgfile"
+          ans=$(jq -r '.choices[0].message.content // "[web search round failed]"' <<<"$RESP" 2>/dev/null)
+          finish "$ans"
+        fi
+        log_call "search-turn-$turn"
+      done
+
+      rm -f "$msgfile"
+      ans=$(jq -r '.choices[0].message.content // "[search rounds exhausted]"' <<<"$RESP" 2>/dev/null)
+      finish "$ans"
+    else
+      # === STANDARD ONE-SHOT (no search) ===
+      jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
+        '{model:$m,max_tokens:$mt,
+          messages: ((if ($s|length)>0 then [{role:"system",content:$s}] else [] end)
+                     + [{role:"user",content:$p}])}' > "$bodyfile"
+      http_post -H "Authorization: Bearer $key" -H "Content-Type: application/json" --data-binary @"$bodyfile"
+      [ "$RC" -ne 0 ] && finish "ERR: $(curl_errmsg "$RC")"
+      ans=$(jq -r --argjson mt "$maxtok" 'def pick: .choices[0].message.content // .choices[0].message.reasoning_content // .choices[0].message.reasoning // "";
+        if (pick) != "" then pick
+        elif (.choices[0].finish_reason // "") == "length" then "ERR: output truncated (finish_reason=length, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger> — a reasoning model likely spent it all on reasoning. (Not a context error; the input fit.)"
+        elif (.choices[0].finish_reason // "") != "" then "ERR: empty output (finish_reason=\(.choices[0].finish_reason))."
+        else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$RESP" 2>/dev/null) || ans="ERR: unparseable response from '$provider' (not JSON): $(printf '%s' "$RESP" | head -c 160)"
+      finish "$ans"
+    fi
     ;;
   anthropic)
     jq -n --arg m "$model" --arg s "$sysprompt" --rawfile p "$promptfile" --argjson mt "$maxtok" \
@@ -158,6 +286,75 @@ case "$ptype" in
            elif (.stop_reason // "") == "max_tokens" then "ERR: output truncated (stop_reason=max_tokens, max_tokens=\($mt)). Raise the budget: CALL_MAX_TOKENS=<bigger>. (Not a context error; the input fit.)"
            elif (.stop_reason // "") != "" then "ERR: empty output (stop_reason=\(.stop_reason)). Likely context window exceeded — shrink the prompt."
            else "ERR: "+(.error.message // (.error|tostring) // "no content") end' <<<"$RESP" 2>/dev/null) || ans="ERR: unparseable response from '$provider' (not JSON): $(printf '%s' "$RESP" | head -c 160)"
+    finish "$ans"
+    ;;
+  codex-responses)
+    # Resolve tokens: prefer ~/.codex/auth.json, fall back to secrets.env
+    codex_auth="$HOME/.codex/auth.json"
+    if [ -f "$codex_auth" ]; then
+      key=$(jq -r '.access_token // empty' "$codex_auth" 2>/dev/null) || true
+      if [ -z "${CODEX_ACCOUNT_ID:-}" ]; then
+        CODEX_ACCOUNT_ID=$(jq -r '.account_id // empty' "$codex_auth" 2>/dev/null) || true
+      fi
+    fi
+
+    # Extract account ID from JWT if still not set
+    if [ -z "${CODEX_ACCOUNT_ID:-}" ] && [ -n "$key" ]; then
+      payload_b64=$(printf '%s' "$key" | cut -d. -f2)
+      CODEX_ACCOUNT_ID=$(printf '%s' "$payload_b64" | tr '_-' '/+' | base64 -d 2>/dev/null \
+        | jq -r '.["https://api.openai.com/auth"].chatgpt_account_id // empty' 2>/dev/null) || true
+    fi
+
+    [ -z "$key" ] && finish "ERR: no Codex token found. Run 'codex auth login' or set CODEX_ACCESS_TOKEN in secrets.env"
+    [ -z "${CODEX_ACCOUNT_ID:-}" ] && finish "ERR: could not extract ChatGPT-Account-ID from token. Set CODEX_ACCOUNT_ID manually."
+
+    codex_endpoint="${endpoint%/}/responses"
+
+    # Codex Responses API requires: instructions (system prompt), store=false, stream=true
+    # Does NOT support max_output_tokens.
+    sys_default="${sysprompt}"
+    [ -z "$sys_default" ] && sys_default="You are a panelist in a multi-model fusion system. Answer the task concisely and accurately."
+
+    jq -n --arg m "$model" --arg s "$sys_default" --rawfile p "$promptfile" \
+      '{model:$m, instructions:$s,
+        input: [{role:"user", content:[{type:"input_text", text:$p}]}],
+        store:false, stream:true}' > "$bodyfile"
+
+    # POST with SSE streaming support
+    http_post_sse "$codex_endpoint" \
+      -H "Authorization: Bearer $key" \
+      -H "Content-Type: application/json" \
+      -H "User-Agent: codex_cli_rs/0.0.0" \
+      -H "originator: codex_cli_rs" \
+      -H "ChatGPT-Account-ID: $CODEX_ACCOUNT_ID" \
+      --data-binary @"$bodyfile"
+
+    [ "$RC" -ne 0 ] && finish "ERR: $(curl_errmsg "$RC")"
+
+    # Check for Codex-specific errors
+    if printf '%s' "$RESP" | grep -qi '"usage_limit_reached"\|429'; then
+      finish "ERR: Codex usage limit reached (quota exhausted). Resets later. Check your OpenAI plan."
+    fi
+    if printf '%s' "$RESP" | grep -qi 'cf-mitigated\|cloudflare'; then
+      finish "ERR: Cloudflare blocked Codex request (403). Headers may be wrong or IP flagged."
+    fi
+    if printf '%s' "$RESP" | grep -qi '"detail".*Instructions are required"'; then
+      finish "ERR: Codex API requires 'instructions' field. Internal error — please report."
+    fi
+    if printf '%s' "$RESP" | grep -qi '"detail".*token.*expired\|"status":401\|invalid_api_key'; then
+      finish "ERR: Codex token expired. Re-auth with 'codex auth login'."
+    fi
+
+    # Parse: http_post_sse already extracts text into fake choices JSON if successful
+    ans=$(jq -r '.choices[0].message.content // empty' <<<"$RESP" 2>/dev/null) || true
+    if [ -z "$ans" ] || [ "$ans" = "null" ]; then
+      # SSE extraction failed — try raw parse
+      ans=$(printf '%s' "$RESP" | grep '^data: ' | grep 'response.output_text.delta' \
+        | jq -r '.delta // empty' 2>/dev/null | tr -d '\n') || true
+    fi
+    if [ -z "$ans" ]; then
+      ans="ERR: empty/unparseable Codex response. First 200 chars: $(printf '%s' "$RESP" | head -c 200)"
+    fi
     finish "$ans"
     ;;
   claude-cli)

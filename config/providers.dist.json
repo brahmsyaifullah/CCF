@@ -43,6 +43,18 @@
       "tok_per_char": 0.27,
       "zero_retention": false,
       "note": "OpenCode Zen pay-per-token. Free models are NOT zero-retention. Do NOT send proprietary code here. Context limit conservative/unverified (128K assumed)."
+    },
+    "codex": {
+      "type": "codex-responses",
+      "endpoint": "https://chatgpt.com/backend-api/codex",
+      "auth": "bearer",
+      "key_env": "CODEX_ACCESS_TOKEN",
+      "max_tokens": 8192,
+      "request_timeout": 600,
+      "max_context_tokens": 200000,
+      "tok_per_char": 0.25,
+      "zero_retention": true,
+      "note": "OpenAI Codex subscription (GPT-5.5). Uses Responses API with SSE streaming. Requires: instructions (auto-injected), store=false, stream=true. Does NOT support max_output_tokens. Auth: run 'codex auth login', CCF reads ~/.codex/auth.json automatically. Cloudflare requires codex_cli_rs User-Agent + originator + ChatGPT-Account-ID headers."
     }
   }
 }

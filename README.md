@@ -68,6 +68,9 @@ Then:
 | `/fusion-on` · `/fusion-off` | Toggle default-mode (proactive routing of substantial tasks). |
 | `/fusion-status` | Show roster, providers, context limits, key presence, reachability. |
 | `/fusion-config` | Add/edit providers, set/rotate keys, enable/disable panelists. |
+| `/fusion-analytics` | Text dashboard: run stats, latency, success rate, cost saved vs OpenRouter. |
+| `/fusion-benchmark` | Run SOLO vs FUSION on 5 coding tasks. Sequential, outputs markdown. |
+| `/fusion-benchmark-report` | Generate comparison REPORT.md from benchmark results. |
 | `/ccf-update` | Update CCF from GitHub (preserves your keys + config). |
 
 Default-mode ships **off** — `/fusion` is always available explicitly.
@@ -92,17 +95,18 @@ Default roster (`panel.json`):
 - **Judge / writer:** Opus (your Claude session) — never demoted.
 - **Panel (enabled):** `glm` (z.ai GLM-5.2) · `deepseek` (OpenCode-Go DeepSeek-V4-Pro).
 - **Available (disabled):** `sonnet`, `opus` (your sub via `claude` CLI), `deepseek-flash`,
-  `north-code` (free, non-zero-retention).
+  `north-code` (free, non-zero-retention), `gpt` (Codex GPT-5.5 via your OpenAI subscription).
 
 ### Provider catalog
 
-CCF ships a catalog (`~/.claude/fusion/catalog.json`) of **20 providers** with correct
+CCF ships a catalog (`~/.claude/fusion/catalog.json`) of **21 providers** with correct
 OpenAI/Anthropic-compatible endpoints, recommended current models, and docs links — **disabled by
 default**, so you enable only what you have keys for:
 
 OpenAI · Anthropic · Google Gemini · DeepSeek · xAI Grok · Mistral · Moonshot · Kimi-Code ·
 MiniMax · Groq · Cerebras · Qwen · OpenRouter · Together · Fireworks · Novita · HuggingFace ·
-Xiaomi MiMo · Ollama (cloud) · **Ollama (local — keyless, air-gapped, zero-retention)**.
+Xiaomi MiMo · Ollama (cloud) · **Ollama (local — keyless, air-gapped, zero-retention)** ·
+**Codex (OpenAI subscription — GPT-5.5 via your own Codex CLI auth)**.
 
 Enable one via `/fusion-onboard`, or `/fusion-config add-provider --from-catalog <name>`. The
 catalog is read-only reference (refreshed on update); your live `providers.json` is never touched by it.
@@ -133,9 +137,23 @@ Verified 2026-06-16 by needle-in-haystack (needle retrieved at 90% depth in a fu
 | `glm` | z.ai GLM-5.2 | 1,048,576 tok | ~0.264 | ≤ ~3.9M chars |
 | `deepseek` | OpenCode-Go DeepSeek-V4-Pro | 1,048,565 tok | ~0.295 | ≤ ~3.55M chars |
 | `sonnet`/`opus` | claude sub | ~200K tok | ~0.25 | ≤ ~760K chars |
+| `gpt` | Codex GPT-5.5 | ~200K tok | ~0.25 | ≤ ~760K chars |
 
 The dispatcher rejects oversize prompts **before** upload (with the exact char budget) instead of
 letting the API return a silent empty response. Large 1M calls take ~40–60s.
+
+### Web search (optional)
+
+Set `TAVILY_API_KEY` in `secrets.env` to let panelists search the web during a task. Add `--search`
+when calling a panelist:
+
+```bash
+~/.claude/fusion/fusion-call --search deepseek "What changed in the latest React release?"
+```
+
+Panelists use standard function calling to request searches; CCF calls Tavily locally and feeds
+results back (up to 3 rounds). Currently supported on the `openai` transport (DeepSeek). Get a key
+at [tavily.com](https://tavily.com).
 
 ## Security
 

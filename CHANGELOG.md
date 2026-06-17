@@ -3,6 +3,55 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.5.0] — 2026-06-17
+
+Benchmark slash commands + fair comparison design.
+
+### Added
+- **`/fusion-benchmark`** slash command: runs SOLO (orchestrator answers directly)
+  vs FUSION (panel → orchestrator judges → synthesizes) on 5 coding tasks.
+  Sequential only — no parallel panelist calls, respects rate limits. Outputs
+  markdown files per task to `benchmark/results/`.
+- **`/fusion-benchmark-report`** slash command: generates `REPORT.md` from
+  benchmark results. Grades both arms on the rubric (correctness/completeness/
+  blind spots/code quality), produces blind-spot analysis table, cost comparison,
+  and honest verdict with caveats about orchestrator/judge bias.
+- **`benchmark/run-benchmark.sh`**: standalone sequential data collector. Calls
+  each enabled panelist one at a time with identical prompts, saves raw responses.
+  Use without Claude Code for CI or batch collection.
+- **Fair comparison design**: SOLO = orchestrator answers alone (no panelists
+  called). FUSION = orchestrator calls panelists → judges. This isolates the
+  panel's value-add. Documents the bias warning: if orchestrator = same model
+  family as a panelist, the test is not fair.
+
+## [1.4.0] — 2026-06-17
+
+Five new features: Codex/GPT-5.5 panelist (#10), Tavily web search (#11), fusion verification
+fixes (#12), analytics dashboard (#13), benchmark suite (#14).
+
+### Added
+- **Codex/GPT-5.5 panelist** (#10): new `codex-responses` transport. Auto-reads `~/.codex/auth.json`,
+  extracts ChatGPT-Account-ID from JWT, injects Cloudflare headers (`User-Agent: codex_cli_rs/0.0.0`,
+  `originator`, `ChatGPT-Account-ID`). Requires SSE streaming (`stream:true`), `store:false`, and
+  `instructions` field. Does NOT support `max_output_tokens`. Disabled by default — enable in panel.json.
+- **Tavily web search** (#11): `--search` flag on `fusion-call` enables multi-turn tool calling.
+  Panelists request searches via standard function calling → CCF calls Tavily locally → results fed
+  back. Max 3 rounds (override with `MAX_SEARCH_TURNS`). Zero change without `--search`.
+- **Analytics dashboard** (#13): `/fusion-analytics` slash command. Pure bash + jq text dashboard
+  reading `fusion.log`. Shows total runs, success rate, per-panelist latency + ok%, cost saved vs
+  OpenRouter Fusion ($0.50/call), recent errors.
+- **Benchmark suite** (#14): 5 real coding tasks (bug fix, security, refactor, architecture,
+  concurrency) with 0-100 grading rubric. Two new slash commands: `/fusion-benchmark` runs
+  SOLO (orchestrator answers directly) vs FUSION (panel → orchestrator judges) sequentially;
+  `/fusion-benchmark-report` generates comparison REPORT.md with blind-spot analysis. Standalone
+  `benchmark/run-benchmark.sh` collects raw panelist responses without AI judgment. Sequential
+  only — no parallel calls, respects rate limits.
+
+### Changed
+- **Fusion verification** (#12): Judge JSON schema now matches OpenRouter (`partial_coverage`,
+  `unique_insights`). `FUSION CONFIRMED: N/N` line is mandatory. `failed_models` tracked. Judge
+  instructed to verify claims via tools. Warning when <2 panelists respond.
+
 ## [1.3.0] — 2026-06-17
 
 Roadmap items: test suite + CI (#1), dispatcher hardening (#3), retry/fallback (#4), logging (#5),

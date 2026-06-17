@@ -67,6 +67,7 @@ install -m 0755 "$SRC/bin/ccf-update.sh"        "$FUSION_DIR/ccf-update.sh"
 install -m 0755 "$SRC/bin/ccf-check-update.sh"  "$FUSION_DIR/ccf-check-update.sh"
 install -m 0755 "$SRC/bin/fusion-onboard"       "$FUSION_DIR/fusion-onboard"
 install -m 0755 "$SRC/bin/ccf-models"           "$FUSION_DIR/ccf-models"
+install -m 0755 "$SRC/bin/ccf-analytics"        "$FUSION_DIR/ccf-analytics"
 for f in "$SRC/commands/"*.md; do install -m 0644 "$f" "$CMD_DIR/$(basename "$f")"; done
 install -m 0644 "$SRC/config/providers.dist.json" "$FUSION_DIR/providers.dist.json"
 install -m 0644 "$SRC/config/panel.dist.json"     "$FUSION_DIR/panel.dist.json"
