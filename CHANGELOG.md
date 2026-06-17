@@ -3,6 +3,14 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.5.1] — 2026-06-17
+
+### Fixed
+- **Codex auth (#10)**: `fusion-call` read the access token + account ID from the wrong path —
+  the codex CLI nests them under `.tokens.access_token` / `.tokens.account_id`, not top-level.
+  Codex auth was failing for everyone ("no Codex token found"); now reads `.tokens.*` with a
+  top-level fallback. Verified end-to-end against the live ChatGPT Codex backend.
+
 ## [1.5.0] — 2026-06-17
 
 Benchmark slash commands + fair comparison design.

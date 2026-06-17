@@ -292,9 +292,10 @@ case "$ptype" in
     # Resolve tokens: prefer ~/.codex/auth.json, fall back to secrets.env
     codex_auth="$HOME/.codex/auth.json"
     if [ -f "$codex_auth" ]; then
-      key=$(jq -r '.access_token // empty' "$codex_auth" 2>/dev/null) || true
+      # codex CLI nests tokens under .tokens.*; older layouts had them top-level. Try both.
+      key=$(jq -r '(.tokens.access_token // .access_token) // empty' "$codex_auth" 2>/dev/null) || true
       if [ -z "${CODEX_ACCOUNT_ID:-}" ]; then
-        CODEX_ACCOUNT_ID=$(jq -r '.account_id // empty' "$codex_auth" 2>/dev/null) || true
+        CODEX_ACCOUNT_ID=$(jq -r '(.tokens.account_id // .account_id) // empty' "$codex_auth" 2>/dev/null) || true
       fi
     fi
 
