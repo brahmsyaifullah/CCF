@@ -23,3 +23,7 @@ notes/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Python cache (py_compile etc.)
+__pycache__/
+*.pyc

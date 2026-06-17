@@ -299,6 +299,18 @@ case "$ptype" in
       fi
     fi
 
+    # Auto-refresh: if the access token is expired / within 120s of expiry and we have a
+    # refresh_token + the login helper, refresh silently before calling (avoids a 401).
+    if [ -n "$key" ] && [ -f "$codex_auth" ] && [ -x "$FDIR/ccf-codex-login" ] && command -v python3 >/dev/null 2>&1; then
+      exp=$(printf '%s' "$key" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r '.exp // 0' 2>/dev/null) || exp=0
+      if [ "${exp:-0}" -gt 0 ] && [ "$(date +%s)" -ge $((exp - 120)) ] \
+         && jq -e '(.tokens.refresh_token // "")|length>0' "$codex_auth" >/dev/null 2>&1; then
+        python3 "$FDIR/ccf-codex-login" --refresh >/dev/null 2>&1 || true
+        key=$(jq -r '(.tokens.access_token // .access_token) // empty' "$codex_auth" 2>/dev/null) || true
+        CODEX_ACCOUNT_ID=$(jq -r '(.tokens.account_id // .account_id) // empty' "$codex_auth" 2>/dev/null) || true
+      fi
+    fi
+
     # Extract account ID from JWT if still not set
     if [ -z "${CODEX_ACCOUNT_ID:-}" ] && [ -n "$key" ]; then
       payload_b64=$(printf '%s' "$key" | cut -d. -f2)
@@ -306,7 +318,7 @@ case "$ptype" in
         | jq -r '.["https://api.openai.com/auth"].chatgpt_account_id // empty' 2>/dev/null) || true
     fi
 
-    [ -z "$key" ] && finish "ERR: no Codex token found. Run 'codex auth login' or set CODEX_ACCESS_TOKEN in secrets.env"
+    [ -z "$key" ] && finish "ERR: no Codex token. Log in via browser:  ~/.claude/fusion/ccf-codex-login   (no codex CLI needed)"
     [ -z "${CODEX_ACCOUNT_ID:-}" ] && finish "ERR: could not extract ChatGPT-Account-ID from token. Set CODEX_ACCOUNT_ID manually."
 
     codex_endpoint="${endpoint%/}/responses"
@@ -343,7 +355,7 @@ case "$ptype" in
       finish "ERR: Codex API requires 'instructions' field. Internal error — please report."
     fi
     if printf '%s' "$RESP" | grep -qi '"detail".*token.*expired\|"status":401\|invalid_api_key'; then
-      finish "ERR: Codex token expired. Re-auth with 'codex auth login'."
+      finish "ERR: Codex token expired. Refresh:  ~/.claude/fusion/ccf-codex-login --refresh   (or re-login: ccf-codex-login)"
     fi
 
     # Parse: http_post_sse already extracts text into fake choices JSON if successful

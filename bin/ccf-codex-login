@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""ccf-codex-login — browser OAuth login for the Codex / GPT-5.5 panelist.
+
+No codex CLI required. Runs the same OAuth 2.0 + PKCE flow the official codex CLI uses
+(client app_EMoamEEZ73f0CkXaXp7hrann against auth.openai.com), captures the redirect on a
+local callback server, exchanges the code for tokens, derives the ChatGPT account id from the
+access-token JWT, and writes ~/.codex/auth.json in the nested {"tokens": {...}} layout that
+CCF's fusion-call reads. Python 3 stdlib only — no pip installs.
+
+  ccf-codex-login                 # open browser, log in, store tokens
+  ccf-codex-login --no-browser    # print the URL instead of opening a browser (headless/SSH)
+  ccf-codex-login --print-url     # alias for --no-browser
+  ccf-codex-login --refresh       # refresh the access token using the stored refresh_token
+"""
+from __future__ import annotations
+import base64, hashlib, json, os, secrets, sys, time, urllib.parse, urllib.request, webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+ISSUER = "https://auth.openai.com"
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"          # official ChatGPT/Codex OAuth client
+AUTH_URL = ISSUER + "/oauth/authorize"
+TOKEN_URL = ISSUER + "/oauth/token"
+SCOPE = "openid profile email offline_access"
+PORT = int(os.environ.get("CCF_CODEX_PORT", "1455"))
+REDIRECT = f"http://localhost:{PORT}/auth/callback"
+AUTH_PATH = os.path.expanduser(os.environ.get("CODEX_AUTH_PATH", "~/.codex/auth.json"))
+
+
+def b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def jwt_claims(token: str) -> dict:
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
+
+
+def account_id_from(access_token: str, id_token: str) -> str | None:
+    for tok in (access_token, id_token):
+        if not tok:
+            continue
+        claims = jwt_claims(tok)
+        auth = claims.get("https://api.openai.com/auth") or {}
+        acct = auth.get("chatgpt_account_id") or claims.get("chatgpt_account_id")
+        if acct:
+            return acct
+    return None
+
+
+def write_auth(tokens: dict) -> None:
+    os.makedirs(os.path.dirname(AUTH_PATH), exist_ok=True)
+    existing = {}
+    if os.path.exists(AUTH_PATH):
+        try:
+            existing = json.load(open(AUTH_PATH))
+        except Exception:
+            existing = {}
+    existing.setdefault("OPENAI_API_KEY", None)
+    existing["auth_mode"] = "chatgpt"
+    existing["tokens"] = tokens
+    existing["last_refresh"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    fd = os.open(AUTH_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(existing, f, indent=2)
+    os.chmod(AUTH_PATH, 0o600)
+
+
+def post_token(data: dict) -> dict:
+    body = urllib.parse.urlencode(data).encode()
+    req = urllib.request.Request(TOKEN_URL, data=body,
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        sys.exit(f"ERROR: token endpoint returned HTTP {e.code}: {e.read().decode()[:300]}")
+    except Exception as e:
+        sys.exit(f"ERROR: token request failed: {e}")
+
+
+def store_from_token_response(tr: dict) -> str:
+    access = tr.get("access_token", "")
+    if not access:
+        sys.exit(f"ERROR: no access_token in response: {json.dumps(tr)[:200]}")
+    acct = account_id_from(access, tr.get("id_token", ""))
+    if not acct:
+        sys.exit("ERROR: could not derive ChatGPT account id from the token JWT.")
+    write_auth({
+        "id_token": tr.get("id_token", ""),
+        "access_token": access,
+        "refresh_token": tr.get("refresh_token", ""),
+        "account_id": acct,
+    })
+    return acct
+
+
+def refresh() -> None:
+    if not os.path.exists(AUTH_PATH):
+        sys.exit("ERROR: no stored auth. Run 'ccf-codex-login' first.")
+    toks = (json.load(open(AUTH_PATH)).get("tokens") or {})
+    rt = toks.get("refresh_token")
+    if not rt:
+        sys.exit("ERROR: no refresh_token stored. Re-run 'ccf-codex-login'.")
+    tr = post_token({"grant_type": "refresh_token", "client_id": CLIENT_ID,
+                     "refresh_token": rt, "scope": SCOPE})
+    tr.setdefault("refresh_token", rt)          # some servers omit it on refresh
+    acct = store_from_token_response(tr)
+    print(f"Refreshed Codex token (account …{acct[-6:]}). Stored in {AUTH_PATH}")
+
+
+def login(open_browser: bool) -> None:
+    verifier = b64url(secrets.token_bytes(64))
+    challenge = b64url(hashlib.sha256(verifier.encode()).digest())
+    state = b64url(secrets.token_bytes(24))
+    params = {
+        "response_type": "code", "client_id": CLIENT_ID, "redirect_uri": REDIRECT,
+        "scope": SCOPE, "code_challenge": challenge, "code_challenge_method": "S256",
+        "id_token_add_organizations": "true", "codex_cli_simplified_flow": "true",
+        "originator": "codex_cli_rs", "state": state,
+    }
+    url = AUTH_URL + "?" + urllib.parse.urlencode(params)
+    holder: dict = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # silence
+            pass
+
+        def do_GET(self):
+            q = urllib.parse.urlparse(self.path)
+            if not q.path.startswith("/auth/callback"):
+                self.send_response(404); self.end_headers(); return
+            qs = urllib.parse.parse_qs(q.query)
+            holder["code"] = (qs.get("code") or [None])[0]
+            holder["state"] = (qs.get("state") or [None])[0]
+            holder["error"] = (qs.get("error") or [None])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html"); self.end_headers()
+            self.wfile.write(b"<html><body style='font-family:sans-serif'>"
+                             b"<h2>CCF: Codex login complete.</h2>"
+                             b"You can close this tab and return to the terminal.</body></html>")
+
+    try:
+        server = HTTPServer(("127.0.0.1", PORT), H)
+    except OSError as e:
+        sys.exit(f"ERROR: cannot bind 127.0.0.1:{PORT} ({e}). "
+                 f"Close whatever uses it or set CCF_CODEX_PORT.")
+
+    print("Opening your browser to log in to ChatGPT (Codex)...")
+    print("If it does not open, paste this URL into your browser:\n")
+    print(url + "\n")
+    if open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    server.timeout = 300
+    deadline = time.time() + 300
+    while "code" not in holder and "error" not in holder and time.time() < deadline:
+        server.handle_request()
+    server.server_close()
+
+    if holder.get("error"):
+        sys.exit(f"ERROR: authorization failed: {holder['error']}")
+    if holder.get("state") != state:
+        sys.exit("ERROR: state mismatch (possible CSRF). Aborted.")
+    if not holder.get("code"):
+        sys.exit("ERROR: timed out waiting for the browser callback (5 min).")
+
+    tr = post_token({"grant_type": "authorization_code", "client_id": CLIENT_ID,
+                     "code": holder["code"], "redirect_uri": REDIRECT,
+                     "code_verifier": verifier})
+    acct = store_from_token_response(tr)
+    print(f"\nCodex login OK (account …{acct[-6:]}). Tokens stored in {AUTH_PATH} (chmod 600).")
+    print("Enable the panelist:  /fusion-config enable gpt   then   /fusion-status")
+
+
+def main() -> None:
+    args = set(sys.argv[1:])
+    if args & {"-h", "--help"}:
+        print(__doc__); return
+    if "--refresh" in args:
+        refresh(); return
+    login(open_browser=not bool(args & {"--no-browser", "--print-url"}))
+
+
+if __name__ == "__main__":
+    main()

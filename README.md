@@ -28,6 +28,26 @@ your task ──┤                              ├──►  Opus judge ──
 - `bash`, `jq`, `curl`, `awk`, `tar` (preinstalled on macOS/Linux except `jq`)
 - A POSIX shell on Windows: **Git for Windows** (native) or **WSL**
 - At least one provider key (z.ai and/or OpenCode). The Sonnet/Opus panelists use your `claude` CLI.
+- For the optional Codex (GPT-5.5) panelist: `python3` (stdlib only, used only for the one-time browser login).
+
+## Codex / GPT-5.5 panelist (optional)
+
+Add OpenAI's Codex (GPT-5.5) as a panelist on your **ChatGPT/Codex subscription** — **no codex CLI
+required**. Log in through your browser:
+
+```bash
+~/.claude/fusion/ccf-codex-login          # opens ChatGPT OAuth, stores tokens (chmod 600)
+~/.claude/fusion/ccf-codex-login --no-browser   # headless/SSH: prints the URL
+```
+
+This runs the same OAuth 2.0 + PKCE flow the codex CLI uses, writes `~/.codex/auth.json`, and
+`fusion-call` auto-refreshes the token when it nears expiry. Then enable it:
+
+```bash
+# add the gpt panelist (provider codex / model gpt-5.5) if not already present, then:
+/fusion-config enable gpt
+/fusion-status            # gpt should probe OK
+```
 
 ## Install
 

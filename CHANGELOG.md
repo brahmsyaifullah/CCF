@@ -3,6 +3,18 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.6.0] — 2026-06-17
+
+### Added
+- **Browser login for Codex** (`ccf-codex-login` + `/fusion-codex-login`): users no longer need the
+  codex CLI or a pre-existing `~/.codex/auth.json`. Runs the OpenAI OAuth 2.0 + PKCE flow (same
+  official client the codex CLI uses) on a local callback server, exchanges the code, derives the
+  ChatGPT account id from the token JWT, and writes `~/.codex/auth.json` (chmod 600). Flow ported
+  from NousResearch/hermes-agent's tested constants. Python 3 stdlib only (login-time; runtime stays bash).
+  `--no-browser` for headless/SSH, `--refresh` to refresh without re-login.
+- **Auto-refresh** in `fusion-call`: when the Codex access token is within 120s of expiry and a
+  refresh_token exists, it refreshes silently before the call — no more mid-session expiry failures.
+
 ## [1.5.1] — 2026-06-17
 
 ### Fixed
