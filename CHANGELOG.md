@@ -3,6 +3,17 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.7.1] — 2026-06-17
+
+### Added
+- **Windows one-click install**: `install.ps1` rewritten into a full bootstrap — detects winget
+  (or Chocolatey), **auto-installs every missing requirement** (Git for Windows → bash+curl, jq,
+  Python 3), **refreshes PATH in-session** so tools work without a reboot, verifies, installs CCF,
+  and launches the setup wizard. `-Yes` for fully unattended.
+- **`install-windows.bat`** — double-click installer (handles execution policy, pauses on output).
+- **`docs/WINDOWS.md`** — Windows quickstart + troubleshooting table (winget/App Installer,
+  execution policy, PATH refresh, proxy, WSL fallback, manual install).
+
 ## [1.7.0] — 2026-06-17
 
 ### Added

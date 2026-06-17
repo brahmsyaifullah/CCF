@@ -83,11 +83,15 @@ This runs the same OAuth 2.0 + PKCE flow the codex CLI uses, writes `~/.codex/au
 curl -fsSL https://raw.githubusercontent.com/brahmsyaifullah/CCF/main/install.sh | bash
 ```
 
-**Windows (native PowerShell — needs Git Bash or WSL)**
+**Windows** — one line in PowerShell. It **auto-installs everything missing** (Git Bash, jq, Python),
+refreshes PATH, installs CCF, and runs setup. No manual prerequisites.
 
 ```powershell
 irm https://raw.githubusercontent.com/brahmsyaifullah/CCF/main/install.ps1 | iex
 ```
+
+Prefer not to touch a terminal? **Double-click [`install-windows.bat`](install-windows.bat).**
+Details + troubleshooting: **[docs/WINDOWS.md](docs/WINDOWS.md)**.
 
 Or clone and run locally:
 
