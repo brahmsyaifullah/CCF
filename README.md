@@ -1,9 +1,21 @@
-# CCF — Claude Code Fusion
+<p align="center">
+  <img src="assets/banner.jpeg" alt="CCF — Claude Code Fusion · Fuse models. Reason better." width="100%">
+</p>
+
+<h1 align="center">CCF — Claude Code Fusion</h1>
+
+<p align="center">
+  <a href="https://github.com/brahmsyaifullah/CCF/releases"><img src="https://img.shields.io/github/v/release/brahmsyaifullah/CCF?color=8b5cf6" alt="release"></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
+  <img src="https://img.shields.io/badge/API%20cost-%240-22c55e" alt="Zero API cost">
+  <img src="https://img.shields.io/badge/context-1M%20tokens-06b6d4" alt="1M context">
+  <a href="benchmark/RESULTS.md"><img src="https://img.shields.io/badge/benchmark-fusion%20196%20vs%20solo%20192-f59e0b" alt="benchmark"></a>
+</p>
 
 Run a **multi-model fusion panel** inside Claude Code, on your **own subscription/flat-rate seats** —
-no OpenRouter billing. A panel of models (GLM-5.2 1M, DeepSeek-V4-Pro 1M, optionally Sonnet/Opus)
-answers a task **in parallel**; your running **Opus session judges** their drafts into structured
-analysis (consensus / contradictions / unique insight / blind spots) and writes the final answer.
+no OpenRouter billing. A panel of models (GLM-5.2 1M, DeepSeek-V4-Pro 1M, optionally Sonnet/Opus,
+GPT-5.5 Codex) answers a task **in parallel**; your running **Opus session judges** their drafts into
+structured analysis (consensus / contradictions / unique insight / blind spots) and writes the final answer.
 
 It's a local re-implementation of OpenRouter's "Fusion" pattern that bills nothing extra because the
 panelists run on seats you already pay for.
@@ -21,6 +33,20 @@ your task ──┤                              ├──►  Opus judge ──
 - **Huge context.** Both default panelists carry **~1,048,576-token** windows (verified by
   needle-in-haystack — see [Context limits](#context-limits)).
 - **Opus stays the author.** Panelists never write files; the orchestrator applies the code.
+
+## Does it actually help?
+
+<p align="center">
+  <img src="assets/solo-vs-fusion.jpeg" alt="3 models are better than 1 — and it costs $0" width="520">
+</p>
+
+We ran a controlled **Solo vs Fusion** benchmark — 5 real engineering tasks (bug fix, security,
+refactor, architecture, concurrency), the same Opus orchestrator as both the solo answerer and the
+fusion judge. **Fusion scored 196 vs Solo 192 / 200.** A real but honest lift: with a top-tier solo
+model the panel mostly **verifies and insures against single-model blind spots** (one task: glm 5/5
+spots, deepseek 3/5, gpt 4/5 — the synthesis caught what the weakest missed). The run also caught a
+real usability bug in our own panel. Full methodology, scores, and bias disclosure:
+**[benchmark/RESULTS.md](benchmark/RESULTS.md)**.
 
 ## Requirements
 

@@ -3,6 +3,18 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.6.3] — 2026-06-17
+
+### Added
+- README hero banner + Solo-vs-Fusion benchmark section with results image and badges.
+- **`benchmark/RESULTS.md`** — published benchmark report (Fusion 196 vs Solo 192 / 200), blind-spot
+  coverage, the deepseek truncation finding, and an explicit judge/solo bias disclosure.
+- `assets/` — banner + solo-vs-fusion marketing images.
+
+### Fixed
+- `run-benchmark.sh`: replaced `mapfile` (bash 4+) with a bash-3.2-compatible read loop so the no-arg
+  "run all tasks" path works on macOS (default bash is 3.2).
+
 ## [1.6.2] — 2026-06-17
 
 ### Fixed

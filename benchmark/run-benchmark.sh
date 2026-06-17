@@ -101,7 +101,9 @@ fi
 # Resolve which tasks to run
 # -----------------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
-    mapfile -t TASK_FILES < <(get_tasks)
+    # bash 3.2 (macOS default) has no `mapfile` — fill the array portably.
+    TASK_FILES=()
+    while IFS= read -r _tf; do [[ -n "$_tf" ]] && TASK_FILES+=("$_tf"); done < <(get_tasks)
 else
     TASK_FILES=()
     for arg in "$@"; do
