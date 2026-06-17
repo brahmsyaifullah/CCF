@@ -27,3 +27,6 @@ Thumbs.db
 # Python cache (py_compile etc.)
 __pycache__/
 *.pyc
+
+# Benchmark run output (generated)
+benchmark/results/

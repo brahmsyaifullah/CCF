@@ -3,6 +3,16 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.6.1] — 2026-06-17
+
+### Changed
+- **Benchmark concurrency**: tasks now run **sequentially** (one at a time, never overlapping) while
+  **panelists within a task run in parallel** (launched together, batch-awaited before judging).
+  Previously every call was fully serial with a 3s gap between calls. `run-benchmark.sh`, the
+  `/fusion-benchmark` command, and the benchmark README all updated. Verified: a 3-panelist task
+  finishes in ~slowest-panelist time (85s) instead of the sum.
+- `benchmark/results/` is now gitignored (generated output).
+
 ## [1.6.0] — 2026-06-17
 
 ### Added

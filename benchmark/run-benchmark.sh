@@ -134,32 +134,32 @@ FAILED=0
 
 log "CCF Benchmark Data Collection"
 log "Tasks: $TOTAL_TASKS | Panelists: $PANELIST_COUNT | Total calls: $TOTAL_CALLS"
-log "Mode: SEQUENTIAL (no parallel)"
+log "Mode: tasks SEQUENTIAL, panelists PARALLEL within each task"
 log "Results: $RESULTS_DIR"
 echo ""
 
 START_TS=$(date +%s)
+TASK_NUM=0
 
 for task_file in "${TASK_FILES[@]}"; do
     task_name=$(basename "$task_file" .md)
     task_bench_id="${task_name%%-*}"  # e.g. "01" from "01-bug-fix"
+    TASK_NUM=$((TASK_NUM + 1))
 
     log "=============================================="
-    log "Task: $task_name"
+    log "Task $TASK_NUM/$TOTAL_TASKS: $task_name  (launching $PANELIST_COUNT panelists in parallel)"
     log "=============================================="
 
     # Read the task prompt ONCE — every panelist gets the identical prompt
     PROMPT=$(cat "$task_file")
 
+    # Launch every enabled panelist for THIS task concurrently.
+    pids=(); pnames=(); pfiles=()
     while IFS= read -r panelist; do
         [[ -z "$panelist" ]] && continue
 
         model=$(jq -r --arg name "$panelist" '.panel[] | select(.name==$name) | .model' "$PANEL_JSON")
         output_file="$RESULTS_DIR/raw-${task_bench_id}-${panelist}.md"
-
-        log "[$((COMPLETED + 1))/$TOTAL_CALLS] Calling $panelist ($model)..."
-
-        call_start=$(date +%s)
 
         # Write header
         {
@@ -168,45 +168,41 @@ for task_file in "${TASK_FILES[@]}"; do
             echo "> Model: ${model}"
             echo "> Panelist: ${panelist}"
             echo "> Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "> Mode: Sequential data collection (no judgment)"
+            echo "> Mode: parallel-per-task data collection (no judgment)"
             echo ""
             echo "---"
             echo ""
         } > "$output_file"
 
-        # Call the panelist — append output to file
-        if "$FUSION_CALL" "$panelist" "$PROMPT" >> "$output_file" 2>&1; then
-            call_end=$(date +%s)
-            call_dur=$((call_end - call_start))
-            bytes=$(wc -c < "$output_file")
-
-            if [[ "$bytes" -lt 50 ]]; then
-                warn "  $panelist: suspiciously short response (${bytes}B) — may have failed"
-                FAILED=$((FAILED + 1))
-            else
-                ok "  $panelist: OK (${bytes}B, ${call_dur}s)"
-            fi
-        else
-            call_end=$(date +%s)
-            call_dur=$((call_end - call_start))
-            err "  $panelist: FAILED (exit $?, ${call_dur}s)"
-            FAILED=$((FAILED + 1))
-
-            # Append error note
-            {
-                echo ""
-                echo "> ERROR: fusion-call exited with non-zero status"
-            } >> "$output_file"
-        fi
-
-        COMPLETED=$((COMPLETED + 1))
-
-        # Rate-limit courtesy: 3-second pause between calls
-        if [[ $COMPLETED -lt $TOTAL_CALLS ]]; then
-            sleep 3
-        fi
-
+        # Background the call; record its exit code to a sidecar .rc file.
+        { "$FUSION_CALL" "$panelist" "$PROMPT" >> "$output_file" 2>&1; echo $? > "$output_file.rc"; } &
+        pids+=("$!"); pnames+=("$panelist"); pfiles+=("$output_file")
+        log "  -> launched $panelist ($model) [pid $!]"
     done < <(get_panelists)
+
+    # Wait for ALL panelists of this task before moving to the next task.
+    for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+
+    # Tally results for this task from the sidecar files.
+    for i in "${!pnames[@]}"; do
+        panelist="${pnames[$i]}"; output_file="${pfiles[$i]}"
+        rc=$(cat "$output_file.rc" 2>/dev/null || echo 1); rm -f "$output_file.rc"
+        bytes=$(wc -c < "$output_file" 2>/dev/null || echo 0)
+        if [[ "$rc" -ne 0 ]]; then
+            err "  $panelist: FAILED (exit $rc)"; FAILED=$((FAILED + 1))
+            { echo ""; echo "> ERROR: fusion-call exited $rc"; } >> "$output_file"
+        elif [[ "$bytes" -lt 50 ]]; then
+            warn "  $panelist: suspiciously short response (${bytes}B) — may have failed"; FAILED=$((FAILED + 1))
+        else
+            ok "  $panelist: OK (${bytes}B)"
+        fi
+        COMPLETED=$((COMPLETED + 1))
+    done
+
+    # Courtesy pause between TASKS (not between panelist calls within a task).
+    if [[ $TASK_NUM -lt $TOTAL_TASKS ]]; then
+        sleep 3
+    fi
 
     echo ""
 done

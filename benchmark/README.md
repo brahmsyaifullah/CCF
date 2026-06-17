@@ -11,7 +11,7 @@ The benchmark has **two arms**, both run by the same AI orchestrator:
 | Arm | What happens | Who produces the answer |
 |-----|-------------|------------------------|
 | **SOLO** | Orchestrator reads the task and answers directly | Orchestrator alone |
-| **FUSION** | Orchestrator calls panelists sequentially → judges → synthesizes | Panelists + orchestrator judgment |
+| **FUSION** | Orchestrator calls panelists in parallel → judges → synthesizes | Panelists + orchestrator judgment |
 
 **Why this is fair:** Same orchestrator intelligence, same task. The only
 variable is whether diverse panelists feed additional perspectives.
@@ -47,7 +47,7 @@ This ensures true model diversity in both the panel and the judge.
 ### Option A — Slash commands (recommended, in Claude Code)
 
 ```
-/fusion-benchmark              # all 5 tasks, solo + fusion, sequential
+/fusion-benchmark              # all 5 tasks (one at a time), solo + fusion
 /fusion-benchmark 01           # just task 01
 /fusion-benchmark 01 03 05     # selected tasks
 ```
@@ -77,8 +77,10 @@ want to separate data collection from analysis. After collecting, run
 
 1. **Same prompt, no hints.** Each task file is the entire prompt. Neither
    solo nor fusion gets extra coaching.
-2. **Sequential execution.** Panelists are called one at a time, never in
-   parallel. This respects rate limits and ensures consistent timing.
+2. **Tasks sequential, panelists parallel.** The 5 tasks run one at a time
+   (never overlapping), but within a task all enabled panelists are called
+   concurrently and the batch is awaited before judging — faster, while still
+   keeping each task's comparison clean and rate-limit-friendly across tasks.
 3. **Identical prompt to all panelists.** The exact task file content is
    sent to every panelist. No rephrasing, no bias.
 4. **Blind grading.** Score both answers with `grade.md` (0–100, four
