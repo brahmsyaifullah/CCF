@@ -67,6 +67,7 @@ install -m 0755 "$root/bin/fusion-onboard"          "$FUSION_DIR/fusion-onboard"
 install -m 0755 "$root/bin/ccf-models"              "$FUSION_DIR/ccf-models"
 install -m 0755 "$root/bin/ccf-analytics"           "$FUSION_DIR/ccf-analytics"
 install -m 0755 "$root/bin/ccf-codex-login"         "$FUSION_DIR/ccf-codex-login"
+install -m 0755 "$root/bin/ccf-onboard"             "$FUSION_DIR/ccf-onboard"
 for f in "$root/commands/"*.md; do install -m 0644 "$f" "$CMD_DIR/$(basename "$f")"; done
 
 # --- DIST templates + catalog: always refresh (reference copies, not your live config) ---

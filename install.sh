@@ -69,6 +69,7 @@ install -m 0755 "$SRC/bin/fusion-onboard"       "$FUSION_DIR/fusion-onboard"
 install -m 0755 "$SRC/bin/ccf-models"           "$FUSION_DIR/ccf-models"
 install -m 0755 "$SRC/bin/ccf-analytics"        "$FUSION_DIR/ccf-analytics"
 install -m 0755 "$SRC/bin/ccf-codex-login"     "$FUSION_DIR/ccf-codex-login"
+install -m 0755 "$SRC/bin/ccf-onboard"          "$FUSION_DIR/ccf-onboard"
 for f in "$SRC/commands/"*.md; do install -m 0644 "$f" "$CMD_DIR/$(basename "$f")"; done
 install -m 0644 "$SRC/config/providers.dist.json" "$FUSION_DIR/providers.dist.json"
 install -m 0644 "$SRC/config/panel.dist.json"     "$FUSION_DIR/panel.dist.json"
@@ -133,15 +134,17 @@ Default-mode is OFF. Turn proactive routing on with /fusion-on (off with /fusion
 Update later with /ccf-update.
 EOF
 
+# Prefer the cross-platform Python wizard (no jq/bash needed); fall back to the bash one.
+if command -v python3 >/dev/null 2>&1; then ONBOARD="python3 \"$FUSION_DIR/ccf-onboard\""; else ONBOARD="\"$FUSION_DIR/fusion-onboard\""; fi
 # Offer interactive onboarding (only with a real terminal on both stdin and stdout —
 # never under curl|bash, where stdin is the piped script).
 if [ -t 0 ] && [ -t 1 ]; then
   printf '\nRun interactive setup now (pick providers, add keys, enable panelists)? [y/N] '
   read -r _ans || _ans=""
   case "$_ans" in
-    y|Y) exec "$FUSION_DIR/fusion-onboard" ;;
-    *)   say "Skipped. Run it anytime:  $FUSION_DIR/fusion-onboard   (or /fusion-onboard)" ;;
+    y|Y) eval exec $ONBOARD ;;
+    *)   say "Skipped. Run it anytime:  $ONBOARD   (or /fusion-setup in Claude Code)" ;;
   esac
 else
-  say "Tip: run  $FUSION_DIR/fusion-onboard  (or /fusion-onboard) for guided provider/key setup."
+  say "Tip: run  $ONBOARD  (or /fusion-setup in Claude Code) for guided provider/key setup."
 fi

@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""ccf-onboard — cross-platform interactive setup for CCF (Claude Code Fusion).
+
+Works the same on macOS, Linux, and **native Windows** — pure Python 3 stdlib, no bash, no jq.
+Pick providers → enter an API key (hidden) or browser-login → pick a model → done. Idempotent;
+every config write is backed up; secrets go only to secrets.env (never echoed).
+
+  ccf-onboard                 full interactive wizard
+  ccf-onboard --check         dependency doctor only (python/jq/curl + OS install hints)
+  ccf-onboard --list          list available providers (defaults + catalog) and exit
+  ccf-onboard --add P [MODEL] [--name N]   register provider+panelist non-interactively (NO key)
+  ccf-onboard --set-key ENV   prompt (hidden) for one key and store it
+  ccf-onboard --enable NAME / --disable NAME
+
+The --add / --set-key split lets Claude Code drive setup: the agent asks which providers/models
+(no secrets) and calls --add; the user runs --set-key to enter the key privately.
+"""
+from __future__ import annotations
+import json, os, sys, getpass, shutil, stat, platform, subprocess, time, urllib.request, urllib.error
+
+HOME = os.path.expanduser("~")
+CLAUDE_DIR = os.environ.get("CLAUDE_HOME", os.path.join(HOME, ".claude"))
+FDIR = os.path.join(CLAUDE_DIR, "fusion")
+P_PROVIDERS = os.path.join(FDIR, "providers.json")
+P_PANEL = os.path.join(FDIR, "panel.json")
+P_SECRETS = os.path.join(FDIR, "secrets.env")
+P_CATALOG = os.path.join(FDIR, "catalog.json")
+P_DIST_PROV = os.path.join(FDIR, "providers.dist.json")
+P_DIST_PANEL = os.path.join(FDIR, "panel.dist.json")
+
+WIN = platform.system() == "Windows"
+def c(s, code): return s if WIN or not sys.stdout.isatty() else f"\033[{code}m{s}\033[0m"
+def bold(s): return c(s, "1");
+def dim(s): return c(s, "2")
+def grn(s): return c(s, "32")
+def ylw(s): return c(s, "33")
+def red(s): return c(s, "31")
+
+def load(path, default=None):
+    try:
+        with open(path) as f: return json.load(f)
+    except Exception:
+        return default if default is not None else {}
+
+def backup(path):
+    if os.path.exists(path):
+        shutil.copy2(path, f"{path}.bak.{time.strftime('%Y%m%d%H%M%S')}")
+
+def write_json(path, data):
+    backup(path)
+    with open(path, "w") as f: json.dump(data, f, indent=2)
+
+def chmod600(path):
+    try: os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception: pass
+
+# ---------- dependency doctor ----------
+INSTALL_HINTS = {
+    "Darwin":  "brew install {pkg}",
+    "Linux":   "sudo apt-get install -y {pkg}   (or your distro's package manager)",
+    "Windows": "winget install {pkg}   (or: choco install {pkg})",
+}
+def doctor():
+    osname = platform.system()
+    print(bold("\nCCF dependency check"))
+    print(f"  python3   {grn('ok')}  ({platform.python_version()})")
+    missing = []
+    for tool in ("jq", "curl"):
+        if shutil.which(tool):
+            print(f"  {tool:<9} {grn('ok')}")
+        else:
+            print(f"  {tool:<9} {red('MISSING')} — needed by the runtime dispatcher (fusion-call)")
+            missing.append(tool)
+    if WIN and not shutil.which("bash"):
+        print(f"  bash      {ylw('not found')} — the runtime dispatcher (fusion-call) needs Git Bash or WSL")
+        print(f"            install Git for Windows: https://git-scm.com/download/win")
+    if missing:
+        hint = INSTALL_HINTS.get(osname, "install via your package manager")
+        print(ylw("\n  Install the missing runtime tools:"))
+        for m in missing:
+            pkg = "jq" if m == "jq" else "curl"
+            print("    " + hint.format(pkg=pkg))
+    else:
+        print(grn("\n  All runtime tools present."))
+    return not missing
+
+# ---------- provider catalog (defaults + catalog.json) ----------
+def provider_menu():
+    """Unified list: default panelists first, then catalog providers."""
+    dist_prov = load(P_DIST_PROV).get("providers", {})
+    dist_panel = load(P_DIST_PANEL).get("panel", [])
+    catalog = load(P_CATALOG).get("providers", [])
+    items = []
+    # defaults derived from the shipped panel roster
+    for pe in dist_panel:
+        prov = dist_prov.get(pe["provider"], {})
+        items.append({
+            "label": f"{pe['name']}  ({pe['provider']}/{pe['model']})",
+            "group": "default", "name": pe["name"], "provider": pe["provider"],
+            "model": pe["model"], "type": prov.get("type", "openai"),
+            "key_env": prov.get("key_env", ""), "auth": prov.get("auth", "bearer"),
+            "endpoint": prov.get("endpoint", ""), "models": [pe["model"]],
+            "zero_retention": prov.get("zero_retention", False),
+            "provider_def": prov,
+        })
+    seen = {i["provider"] for i in items}
+    for cp in catalog:
+        if cp["name"] in seen:
+            continue
+        items.append({
+            "label": f"{cp['name']}  ({', '.join(m['model'] for m in cp.get('models', [])[:3])})",
+            "group": "catalog", "name": cp["name"], "provider": cp["name"],
+            "model": next((m["model"] for m in cp.get("models", []) if m.get("recommended")),
+                          (cp.get("models") or [{"model": ""}])[0]["model"]),
+            "type": cp.get("type", "openai"), "key_env": cp.get("key_env", ""),
+            "auth": cp.get("auth", "bearer"), "endpoint": cp.get("endpoint", ""),
+            "models": [m["model"] for m in cp.get("models", [])],
+            "zero_retention": cp.get("zero_retention", False),
+            "provider_def": {k: cp[k] for k in ("type","endpoint","auth","key_env",
+                              "max_context_tokens","tok_per_char","zero_retention") if k in cp}
+                             | {"max_tokens": 8192, "request_timeout": 600},
+        })
+    return items
+
+# ---------- input helpers (numbered, works everywhere incl. Windows) ----------
+def choose_multi(title, items):
+    print(bold(f"\n{title}"))
+    last_group = None
+    for i, it in enumerate(items, 1):
+        if it.get("group") != last_group:
+            last_group = it.get("group")
+            print(dim(f"  — {'recommended default panel' if last_group=='default' else 'catalog providers'} —"))
+        zr = "" if it["zero_retention"] else ylw("  [not zero-retention]")
+        print(f"  {i:2}) {it['label']}{zr}")
+    raw = input(c("\n  Pick providers (comma-separated numbers, e.g. 1,2): ", "33")).strip()
+    out = []
+    for tok in raw.replace(" ", "").split(","):
+        if tok.isdigit() and 1 <= int(tok) <= len(items):
+            out.append(items[int(tok) - 1])
+    return out
+
+def choose_one(title, options, default=0):
+    print(bold(f"\n{title}"))
+    for i, o in enumerate(options, 1):
+        print(f"  {i:2}) {o}" + (dim("  (recommended)") if i-1 == default else ""))
+    raw = input(c(f"  Select [1-{len(options)}] ({default+1}): ", "2")).strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(options):
+        return int(raw) - 1
+    return default
+
+# ---------- config writers ----------
+def set_key(env, value):
+    lines = []
+    if os.path.exists(P_SECRETS):
+        with open(P_SECRETS) as f:
+            lines = [l for l in f.read().splitlines() if not l.startswith(env + "=")]
+    backup(P_SECRETS)
+    lines.append(f"{env}={value}")
+    with open(P_SECRETS, "w") as f: f.write("\n".join(lines) + "\n")
+    chmod600(P_SECRETS)
+
+def key_present(env):
+    if not env or not os.path.exists(P_SECRETS): return False
+    for l in open(P_SECRETS):
+        if l.startswith(env + "=") and l.strip() != env + "=":
+            return True
+    return False
+
+def register_provider(name, pdef):
+    prov = load(P_PROVIDERS, {"providers": {}})
+    prov.setdefault("providers", {})[name] = pdef
+    write_json(P_PROVIDERS, prov)
+
+def add_panelist(pname, provider, model, sensitive_ok=False):
+    panel = load(P_PANEL, {"panel": []})
+    panel.setdefault("panel", [])
+    for p in panel["panel"]:
+        if p.get("name") == pname:
+            # already present (e.g. shipped in the roster, disabled) — "add" = enable it.
+            p["enabled"] = True
+            if model: p["model"] = model
+            write_json(P_PANEL, panel)
+            return "enabled"
+    panel["panel"].append({"name": pname, "provider": provider, "model": model,
+                           "role": "panelist", "enabled": True, "sensitive_ok": sensitive_ok})
+    write_json(P_PANEL, panel)
+    return "added"
+
+def set_enabled(pname, val):
+    panel = load(P_PANEL, {"panel": []})
+    hit = False
+    for p in panel.get("panel", []):
+        if p.get("name") == pname: p["enabled"] = val; hit = True
+    if hit: write_json(P_PANEL, panel)
+    return hit
+
+# ---------- probe (no bash/jq; pure urllib) ----------
+def probe(it, key):
+    ep, typ = it["endpoint"], it["type"]
+    if typ == "claude-cli" or not ep:
+        return None  # can't probe locally; skip
+    try:
+        if typ == "anthropic":
+            body = {"model": it["model"], "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "Reply OK"}]}
+            headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+            headers["x-api-key" if it["auth"] == "x-api-key" else "Authorization"] = \
+                key if it["auth"] == "x-api-key" else f"Bearer {key}"
+        else:
+            body = {"model": it["model"], "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "Reply OK"}]}
+            headers = {"Content-Type": "application/json"}
+            if key: headers["Authorization"] = f"Bearer {key}"
+        req = urllib.request.Request(ep, data=json.dumps(body).encode(), headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return 200 <= r.status < 300
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code}"
+    except Exception as e:
+        return str(e)[:80]
+
+# ---------- flows ----------
+def setup_one(it):
+    name = it["name"]
+    print(bold(f"\n→ {name}") + dim(f"  ({it['provider']}, {it['type']})"))
+    if not it["zero_retention"]:
+        print(ylw("  note: not zero-retention — don't send proprietary code; sensitive_ok stays false."))
+    # model choice
+    model = it["model"]
+    if len(it["models"]) > 1:
+        idx = choose_one("Which model?", it["models"], default=0)
+        model = it["models"][idx]
+    # auth
+    env = it["key_env"]
+    if it["type"] == "claude-cli":
+        print(dim("  uses your local `claude` CLI — no API key needed."))
+    elif it["provider"] == "codex":
+        print("  Codex uses browser login. Run:  " + grn("ccf-codex-login"))
+        if input("  Run it now? [y/N] ").strip().lower() == "y":
+            try: subprocess.run([sys.executable, os.path.join(FDIR, "ccf-codex-login")])
+            except Exception as e: print(red(f"  could not launch: {e}"))
+    elif not env:
+        print(dim("  keyless provider (e.g. local Ollama) — no key needed."))
+    else:
+        if key_present(env):
+            if input(f"  {env} already set. Replace? [y/N] ").strip().lower() != "y":
+                pass
+            else:
+                env_val = getpass.getpass(f"  Paste {env} (hidden): ").strip()
+                if env_val: set_key(env, env_val); print(grn("  key saved."))
+        else:
+            env_val = getpass.getpass(f"  Paste {env} (hidden, blank to skip): ").strip()
+            if env_val:
+                set_key(env, env_val); print(grn("  key saved."))
+    # register
+    pdef = dict(it["provider_def"])
+    if it["group"] == "catalog":
+        register_provider(it["provider"], pdef)
+    add_panelist(name, it["provider"], model, sensitive_ok=bool(it["zero_retention"]))
+    # probe (best effort)
+    if it["type"] not in ("claude-cli",) and key_present(env):
+        print(dim("  probing..."), end=" ", flush=True)
+        r = probe({**it, "model": model}, _read_key(env))
+        print(grn("ok ✓") if r is True else ylw(f"probe: {r}") if r else dim("skipped"))
+
+def _read_key(env):
+    if not env or not os.path.exists(P_SECRETS): return ""
+    for l in open(P_SECRETS):
+        if l.startswith(env + "="): return l.split("=", 1)[1].strip()
+    return ""
+
+def wizard():
+    print(bold("\n=== CCF onboarding ===") + dim("  cross-platform · keys stay local"))
+    doctor()
+    items = provider_menu()
+    picks = choose_multi("Choose panelists / providers to set up:", items)
+    if not picks:
+        print(ylw("\nNothing selected. Re-run `ccf-onboard` anytime.")); return
+    for it in picks:
+        setup_one(it)
+    print(bold("\nDone.") + " Enabled panel: " +
+          ", ".join(p["name"] for p in load(P_PANEL).get("panel", []) if p.get("enabled")))
+    print("Next: restart Claude Code, then " + grn("/fusion-status") + " and " + grn("/fusion <task>") + ".")
+
+def main():
+    a = sys.argv[1:]
+    if not os.path.isdir(FDIR):
+        sys.exit(f"CCF not installed at {FDIR}. Run the installer first.")
+    if "--help" in a or "-h" in a:
+        print(__doc__); return
+    if "--check" in a: doctor(); return
+    if "--list" in a:
+        for i, it in enumerate(provider_menu(), 1): print(f"{i:2}) {it['label']}  key={it['key_env'] or '-'}")
+        return
+    if "--set-key" in a:
+        env = a[a.index("--set-key") + 1]
+        val = getpass.getpass(f"Paste {env} (hidden): ").strip()
+        if val: set_key(env, val); print(grn(f"{env} saved (…{val[-4:]})."))
+        return
+    if "--enable" in a: print("enabled" if set_enabled(a[a.index("--enable")+1], True) else "not found"); return
+    if "--disable" in a: print("disabled" if set_enabled(a[a.index("--disable")+1], False) else "not found"); return
+    if "--add" in a:
+        name = a[a.index("--add") + 1]
+        it = next((x for x in provider_menu() if x["name"] == name or x["provider"] == name), None)
+        if not it: sys.exit(f"unknown provider/panelist '{name}' (see --list)")
+        model = a[a.index("--add") + 2] if len(a) > a.index("--add") + 2 and not a[a.index("--add")+2].startswith("-") else it["model"]
+        pname = a[a.index("--name") + 1] if "--name" in a else it["name"]
+        if it["group"] == "catalog": register_provider(it["provider"], dict(it["provider_def"]))
+        add_panelist(pname, it["provider"], model, sensitive_ok=bool(it["zero_retention"]))
+        print(grn(f"added panelist '{pname}' ({it['provider']}/{model}). Set its key: ccf-onboard --set-key {it['key_env'] or '(none)'}"))
+        return
+    wizard()
+
+if __name__ == "__main__":
+    main()

@@ -77,6 +77,18 @@ Then re-run this installer.
 }
 Write-Host "  bash: $bash$(if($useWsl){' (WSL)'}else{' (Git Bash)'})"
 
+# 1b. ensure jq is available (the runtime dispatcher needs it). Git Bash doesn't bundle it.
+if (-not $useWsl -and -not (Get-Command jq.exe -ErrorAction SilentlyContinue)) {
+  Write-Host "  jq not found (the runtime needs it)."
+  if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    Write-Host "  installing jq via winget ..."
+    try { winget install --silent --accept-source-agreements --accept-package-agreements jqlang.jq | Out-Null } catch {}
+  }
+  if (-not (Get-Command jq.exe -ErrorAction SilentlyContinue)) {
+    Write-Host "  Please install jq manually: winget install jqlang.jq  (or choco install jq), then re-run." -ForegroundColor Yellow
+  }
+}
+
 # 2. obtain a checkout (use local if present, else download)
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 if (Test-Path (Join-Path $scriptDir 'install.sh')) {
@@ -117,4 +129,11 @@ if ($LASTEXITCODE -ne 0) { throw "install.sh failed (exit $LASTEXITCODE)" }
 
 Write-Host ''
 Write-Host "== Done. CCF installed to $ClaudeDir =="
-Write-Host "Next: add keys to $ClaudeDir\fusion\secrets.env, restart Claude Code, then /fusion-status."
+if (Get-Command python.exe -ErrorAction SilentlyContinue) {
+  Write-Host "Next: run the setup wizard (cross-platform, no bash/jq needed):"
+  Write-Host "  python `"$ClaudeDir\fusion\ccf-onboard`""
+} else {
+  Write-Host "Next: add keys via setup wizard. Install Python 3, then: python $ClaudeDir\fusion\ccf-onboard"
+}
+Write-Host "Or in Claude Code just say:  /fusion-setup   — it guides you through providers, models, and keys."
+Write-Host "Then restart Claude Code and run /fusion-status."

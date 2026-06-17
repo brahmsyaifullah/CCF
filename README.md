@@ -123,16 +123,25 @@ Default-mode ships **off** — `/fusion` is always available explicitly.
 
 ## Onboarding
 
-After install, run the guided setup in your terminal (keys are read hidden, never pasted into chat):
+Two ways, both smooth on **macOS, Linux, and native Windows**:
+
+**1. Let Claude Code do it** — just say **`/fusion-setup`** (or "set up CCF" with the repo link).
+The agent installs if needed, checks dependencies, asks which **providers + models** you want
+(buttons, no secrets in chat), and walks you through key entry privately. Zero file editing.
+
+**2. Run the wizard yourself** — cross-platform Python, **no bash or jq required for setup**:
 
 ```bash
-~/.claude/fusion/fusion-onboard           # interactive
-~/.claude/fusion/fusion-onboard --dry-run # preview, writes nothing
+python3 ~/.claude/fusion/ccf-onboard          # interactive: pick providers → key (hidden) → model
+python3 ~/.claude/fusion/ccf-onboard --check  # dependency doctor (OS-specific install hints)
 ```
 
-It lists the provider catalog, takes a key, **validates it with a live probe**, registers the
-provider, and enables a recommended model as a panelist — idempotent, every write backed up. Inside
-Claude Code, `/fusion-onboard` points you to it.
+It presents the default panel (glm, deepseek, gpt/Codex) **and** the 20-provider catalog, takes a
+key hidden (or browser-login for Codex, or nothing for Opus/Sonnet/local Ollama), validates it,
+and enables the panelist — idempotent, every write backed up, keys only ever in `secrets.env`.
+
+> The runtime dispatcher itself uses `bash` + `jq` (`curl`). On Windows that means Git Bash or WSL;
+> `install.ps1` auto-installs `jq` via winget. Onboarding (the Python wizard) needs neither.
 
 ## Providers & panelists
 

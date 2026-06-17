@@ -3,6 +3,25 @@
 All notable changes to CCF (Claude Code Fusion) are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are [SemVer](https://semver.org/).
 
+## [1.7.0] — 2026-06-17
+
+### Added
+- **Cross-platform onboarding** (`ccf-onboard`, Python stdlib): replaces the bash-only wizard for
+  setup. Works the same on **macOS, Linux, and native Windows** — **no bash or jq needed to onboard**.
+  Dependency doctor (OS-specific install hints), unified provider menu (default panel + 20-provider
+  catalog), hidden key entry / browser-login (Codex) / keyless (Ollama), per-provider model choice,
+  live probe, idempotent writes with backups. Modes: interactive, `--check`, `--list`,
+  `--add P [MODEL]`, `--set-key ENV`, `--enable/--disable`.
+- **`/fusion-setup`** — Claude-Code-driven setup. Say it (or "set up CCF" + the repo link) and the
+  agent installs if needed, runs the dependency doctor, asks which providers + models you want
+  (buttons, no secrets in chat), and walks you through key entry privately. No file editing.
+- **Windows**: `install.ps1` now auto-installs `jq` via winget (the runtime needs it) and points to
+  the Python wizard / `/fusion-setup`.
+
+### Changed
+- `install.sh` end-of-install offer now prefers the cross-platform Python wizard (falls back to the
+  bash onboarder). README onboarding section rewritten around the two new paths.
+
 ## [1.6.3] — 2026-06-17
 
 ### Added
